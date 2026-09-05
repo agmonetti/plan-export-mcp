@@ -81,6 +81,14 @@ describe('Markdown & HTML Renderer Tests', () => {
     assert.ok(html.includes('src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"'));
   });
 
+  it('should escape malicious HTML inside Mermaid diagram content', async () => {
+    const maliciousMermaidMd = '```mermaid\ngraph TD\nA --> B</div><script>alert("mermaid-xss")</script><div class="mermaid">\n```';
+    const html = await renderMarkdownToHtml(maliciousMermaidMd, 'dark');
+
+    assert.ok(!html.includes('<script>alert("mermaid-xss")'), 'Should not contain raw script tag inside mermaid');
+    assert.ok(html.includes('&lt;/div&gt;&lt;script&gt;alert('), 'Should escape tags inside mermaid container');
+  });
+
   it('should neutralize interactive form inputs and force disabled checkboxes', async () => {
     const formInputMd = `
 - [x] Legitimate task

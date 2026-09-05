@@ -547,7 +547,7 @@ export async function renderMarkdownToHtml(
     const code = token.content;
 
     if (lang === 'mermaid') {
-      return `<div class="mermaid-container"><div class="mermaid">${code.trim()}</div></div>\n`;
+      return `<div class="mermaid-container"><div class="mermaid">${escapeHtml(code.trim())}</div></div>\n`;
     }
 
     const safeLang = highlighter.getLoadedLanguages().includes(lang) ? lang : 'text';
