@@ -8,6 +8,9 @@ import {
   McpError,
   ErrorCode,
 } from '@modelcontextprotocol/sdk/types.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { exportPlan, closeBrowser } from './exporter.js';
 import type { ExportPlanOptions, ExportFormat, Theme } from './types.js';
 import { z } from 'zod';
@@ -238,7 +241,20 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error('Fatal error in plan-export-mcp:', err);
-  process.exit(1);
-});
+function isDirectExecution(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    const scriptPath = fs.realpathSync(path.resolve(process.argv[1]));
+    const currentPath = fs.realpathSync(fileURLToPath(import.meta.url));
+    return scriptPath === currentPath;
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectExecution()) {
+  main().catch((err) => {
+    console.error('Fatal error in plan-export-mcp:', err);
+    process.exit(1);
+  });
+}

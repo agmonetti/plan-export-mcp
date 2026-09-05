@@ -32,19 +32,25 @@ export function resolveSafeMarkdownInput(input: string): { content: string; deri
       throw new Error('Security Exception: Null bytes are not permitted in path input.');
     }
 
+    const cwd = path.resolve(process.cwd());
+    if (cwd === path.parse(cwd).root) {
+      throw new Error('Security Exception: Operating directly at filesystem root is not permitted.');
+    }
+
     const hasPathSeparator = trimmed.includes('/') || trimmed.includes('\\');
     const ext = path.extname(trimmed).toLowerCase();
-    const isPath = trimmed.startsWith('.') || hasPathSeparator || ALLOWED_INPUT_EXTENSIONS.has(ext);
+    const candidatePath = path.isAbsolute(trimmed)
+      ? path.resolve(trimmed)
+      : path.resolve(cwd, trimmed);
+
+    const isPath =
+      trimmed.startsWith('.') ||
+      hasPathSeparator ||
+      ALLOWED_INPUT_EXTENSIONS.has(ext) ||
+      (ext !== '' && !trimmed.includes(' ') && fs.existsSync(candidatePath));
 
     if (isPath) {
-      const cwd = path.resolve(process.cwd());
-      if (cwd === path.parse(cwd).root) {
-        throw new Error('Security Exception: Operating directly at filesystem root is not permitted.');
-      }
-
-      const resolvedPath = path.isAbsolute(trimmed)
-        ? path.resolve(trimmed)
-        : path.resolve(cwd, trimmed);
+      const resolvedPath = candidatePath;
 
       const rel = path.relative(cwd, resolvedPath);
       if (rel.startsWith('..') || path.isAbsolute(rel) || resolvedPath === cwd) {

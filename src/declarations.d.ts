@@ -1,4 +1,9 @@
 declare module 'markdown-it-task-lists' {
-  const taskLists: any;
+  export interface TaskListsOptions {
+    enabled?: boolean;
+    label?: boolean;
+    labelAfter?: boolean;
+  }
+  const taskLists: (md: any, options?: TaskListsOptions) => void;
   export default taskLists;
 }

@@ -4,14 +4,14 @@
   "description": "MCP server to export AI agent plans and architectural audits to beautiful PDFs, high-res PNGs, and self-contained HTML files.",
   "type": "module",
   "bin": {
-    "plan-export-mcp": "./dist/index.js"
+    "plan-export-mcp": "dist/index.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "author": "agmonetti",
   "repository": {
     "type": "git",
-    "url": "https://github.com/agmonetti/plan-export-mcp.git"
+    "url": "git+https://github.com/agmonetti/plan-export-mcp.git"
   },
   "homepage": "https://github.com/agmonetti/plan-export-mcp#readme",
   "bugs": {
@@ -28,7 +28,8 @@
     "watch": "tsc --watch",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
-    "prepublishOnly": "npm run build"
+    "test": "tsx --test test/*.test.ts",
+    "prepublishOnly": "npm run build && npm test"
   },
   "keywords": [
     "mcp",
