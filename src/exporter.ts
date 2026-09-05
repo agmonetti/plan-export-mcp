@@ -100,8 +100,10 @@ export function sanitizeBaseName(rawName: string): string {
 }
 
 export function assertInsideDir(filePath: string, targetDir: string): void {
-  const relative = path.relative(targetDir, filePath);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+  const resolvedTarget = path.resolve(targetDir);
+  const resolvedFile = path.resolve(filePath);
+  const relative = path.relative(resolvedTarget, resolvedFile);
+  if (relative.startsWith('..') || path.isAbsolute(relative) || resolvedFile === resolvedTarget) {
     throw new Error(`Security Exception: Target path "${filePath}" attempts to escape output directory "${targetDir}".`);
   }
 }
@@ -137,6 +139,7 @@ const MERMAID_TIMEOUT_MS = 6000;
 
 // Concurrency control: limit simultaneous browser export tasks to prevent RAM exhaustion
 const MAX_CONCURRENT_EXPORTS = 2;
+const MAX_QUEUE_SIZE = 20;
 let activeExports = 0;
 const waitQueue: Array<() => void> = [];
 
@@ -144,6 +147,11 @@ async function acquireExportSlot(): Promise<void> {
   if (activeExports < MAX_CONCURRENT_EXPORTS) {
     activeExports++;
     return;
+  }
+  if (waitQueue.length >= MAX_QUEUE_SIZE) {
+    throw new Error(
+      'Export capacity exceeded: Concurrency queue is full (max 20 pending requests). Please retry shortly.'
+    );
   }
   return new Promise<void>((resolve) => {
     waitQueue.push(() => {
@@ -230,8 +238,26 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
     const { content: markdownContent, derivedName } = resolveSafeMarkdownInput(input);
     const safeBaseName = sanitizeBaseName(outputName || derivedName || `plan-${Date.now()}`);
 
+    // Validate outputDir to prevent workspace escape and arbitrary directory creation
+    const trimmedOutputDir = outputDir.trim();
+    if (trimmedOutputDir.includes('\0')) {
+      throw new Error('Security Exception: Null bytes are not permitted in output directory.');
+    }
+    if (path.isAbsolute(trimmedOutputDir)) {
+      throw new Error(
+        `Security Exception: Absolute path "${trimmedOutputDir}" is not permitted for outputDir. Use a path relative to the workspace.`
+      );
+    }
+    const cwd = path.resolve(process.cwd());
+    const resolvedOutputDir = path.resolve(cwd, trimmedOutputDir);
+    const relOut = path.relative(cwd, resolvedOutputDir);
+    if (relOut.startsWith('..') || path.isAbsolute(relOut)) {
+      throw new Error(
+        `Security Exception: Target output directory "${trimmedOutputDir}" escapes the project workspace.`
+      );
+    }
+
     // Ensure output directory exists
-    const resolvedOutputDir = path.resolve(process.cwd(), outputDir);
     if (!fs.existsSync(resolvedOutputDir)) {
       fs.mkdirSync(resolvedOutputDir, { recursive: true });
     }
@@ -305,23 +331,31 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
       // Defensive default timeout for all page operations
       page.setDefaultTimeout(OPERATION_TIMEOUT_MS);
 
+      // Attack surface reduction: disable JavaScript entirely when Mermaid diagrams are not present
+      const hasMermaid = fullHtml.includes('class="mermaid');
+      if (!hasMermaid) {
+        await page.setJavaScriptEnabled(false);
+      }
+
       // 2x Retina DPR for crisp, high-density display
       await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 2 });
       await page.setContent(fullHtml, { waitUntil: 'load', timeout: OPERATION_TIMEOUT_MS });
 
       // Wait for Mermaid diagrams if present
-      await page
-        .waitForFunction(
-          () => {
-            const diagrams = document.querySelectorAll('.mermaid');
-            if (diagrams.length === 0) return true;
-            return Array.from(diagrams).every((d) => d.querySelector('svg'));
-          },
-          { timeout: MERMAID_TIMEOUT_MS }
-        )
-        .catch(() => {
-          // Fallback: proceed if mermaid takes too long or isn't present
-        });
+      if (hasMermaid) {
+        await page
+          .waitForFunction(
+            () => {
+              const diagrams = document.querySelectorAll('.mermaid');
+              if (diagrams.length === 0) return true;
+              return Array.from(diagrams).every((d) => d.querySelector('svg'));
+            },
+            { timeout: MERMAID_TIMEOUT_MS }
+          )
+          .catch(() => {
+            // Fallback: proceed if mermaid takes too long or isn't present
+          });
+      }
 
       // Format: PNG
       if (formats.includes('png')) {

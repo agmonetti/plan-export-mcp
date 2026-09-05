@@ -25,6 +25,19 @@ const ExportPlanSchema = z.object({
   outputName: z.string().optional(),
 });
 
+export function sanitizeErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const cwd = process.cwd();
+  // Strip working directory path references
+  let sanitized = raw.split(cwd).join('.');
+  // Strip user home directories in common OS paths to prevent user enumeration
+  sanitized = sanitized
+    .replace(/\/home\/[a-zA-Z0-9._-]+/g, '/home/[user]')
+    .replace(/\/Users\/[a-zA-Z0-9._-]+/g, '/Users/[user]')
+    .replace(/[A-Z]:\\Users\\[a-zA-Z0-9._-]+/gi, 'C:\\Users\\[user]');
+  return sanitized;
+}
+
 export async function runMcpServer() {
   const server = new Server(
     {
@@ -121,7 +134,7 @@ export async function runMcpServer() {
         content: [
           {
             type: 'text',
-            text: `Failed to export plan: ${err.message || String(err)}`,
+            text: `Failed to export plan: ${sanitizeErrorMessage(err)}`,
           },
         ],
       };
