@@ -2,8 +2,16 @@ import puppeteer, { type Browser } from 'puppeteer';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { renderMarkdownToHtml } from './renderer.js';
-import type { ExportPlanOptions, ExportResult, Theme, ExportFormat } from './types.js';
+import { renderMarkdownToHtml, renderDiagramToHtml } from './renderer.js';
+import type {
+  ExportPlanOptions,
+  ExportResult,
+  Theme,
+  ExportFormat,
+  RenderDiagramOptions,
+  RenderDiagramResult,
+  DiagramFormat,
+} from './types.js';
 import { ExportError, SecurityError, BrowserError } from './errors.js';
 import { CONFIG } from './config.js';
 import { gracefulExit } from './shutdown.js';
@@ -599,12 +607,175 @@ export class ExportService {
       this.releaseExportSlot();
     }
   }
+
+  public async renderDiagram(options: RenderDiagramOptions): Promise<RenderDiagramResult> {
+    const {
+      diagram,
+      theme = this.config.defaults.theme,
+      format = 'png',
+      outputDir = this.config.defaults.outputDir,
+      outputName,
+      includeBase64 = true,
+    } = options;
+
+    if (!diagram || typeof diagram !== 'string' || diagram.trim().length === 0) {
+      throw new ExportError('Diagram content is required and cannot be empty.', 'INVALID_INPUT');
+    }
+
+    if (diagram.includes('\0')) {
+      throw new SecurityError('Security Exception: Null bytes are not permitted in diagram input.', 'NULL_BYTE');
+    }
+
+    if (Buffer.byteLength(diagram, 'utf-8') > this.config.limits.maxInputBytes) {
+      throw new ExportError('Diagram input exceeds maximum allowed size of 10MB.', 'INPUT_TOO_LARGE');
+    }
+
+    const safeBaseName = sanitizeBaseName(outputName || `diagram-${Date.now()}`);
+
+    // Validate outputDir: allow relative and safe absolute paths, block system and credential paths
+    const trimmedOutputDir = outputDir.trim();
+    if (trimmedOutputDir.includes('\0')) {
+      throw new SecurityError('Security Exception: Null bytes are not permitted in output directory.', 'NULL_BYTE');
+    }
+    const cwd = path.resolve(process.cwd());
+    const expandedOut = expandHome(trimmedOutputDir);
+    const resolvedOutputDir = path.isAbsolute(expandedOut)
+      ? path.normalize(expandedOut)
+      : path.resolve(cwd, expandedOut);
+
+    if (isSystemOrRestrictedPath(resolvedOutputDir)) {
+      throw new SecurityError(
+        `Security Exception: Access denied. Target output directory "${trimmedOutputDir}" is a restricted system or credential path.`,
+        'RESTRICTED_PATH'
+      );
+    }
+
+    if (!fs.existsSync(resolvedOutputDir)) {
+      fs.mkdirSync(resolvedOutputDir, { recursive: true });
+    }
+
+    const realOutputDir = fs.realpathSync(resolvedOutputDir);
+    if (isSystemOrRestrictedPath(realOutputDir)) {
+      throw new SecurityError(
+        `Security Exception: Access denied. Target output directory resolves to a restricted system path.`,
+        'RESTRICTED_PATH'
+      );
+    }
+
+    const dirStat = fs.statSync(realOutputDir);
+    if (!dirStat.isDirectory()) {
+      throw new ExportError(
+        `Invalid output directory: Target path is not a directory: "${trimmedOutputDir}".`,
+        'NOT_A_DIRECTORY'
+      );
+    }
+
+    await this.acquireExportSlot();
+    try {
+      const diagramHtml = renderDiagramToHtml(diagram, theme, { standaloneHtml: false });
+      const browser = await this.getBrowser();
+      const page = await browser.newPage();
+
+      try {
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+          if (isAllowedBrowserUrl(req.url())) {
+            req.continue();
+          } else {
+            req.abort('blockedbyclient');
+          }
+        });
+
+        page.setDefaultTimeout(this.config.timeouts.operationMs);
+        await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 2 });
+        await page.setContent(diagramHtml, { waitUntil: 'load', timeout: this.config.timeouts.operationMs });
+
+        // Wait for Mermaid to render the SVG
+        await page.waitForFunction(
+          () => {
+            const svg = document.querySelector('.mermaid svg');
+            return svg !== null;
+          },
+          { timeout: this.config.timeouts.mermaidMs }
+        );
+
+        // Check for Mermaid syntax errors reported in DOM
+        const renderError = await page.evaluate(() => {
+          const svg = document.querySelector('.mermaid svg');
+          if (!svg) return 'No SVG element was generated.';
+          if (
+            svg.getAttribute('aria-roledescription') === 'error' ||
+            svg.classList.contains('error-icon') ||
+            svg.querySelector('.error-icon')
+          ) {
+            return svg.textContent || 'Syntax error in Mermaid diagram.';
+          }
+          return null;
+        });
+
+        if (renderError) {
+          throw new ExportError(`Mermaid rendering error: ${renderError.trim()}`, 'MERMAID_SYNTAX_ERROR');
+        }
+
+        const svgElement = await page.$('.mermaid svg');
+        if (!svgElement) {
+          throw new ExportError('Failed to locate rendered SVG element in DOM.', 'RENDER_FAILED');
+        }
+
+        if (format === 'svg') {
+          const svgContent = await page.evaluate(() => {
+            const svg = document.querySelector('.mermaid svg');
+            return svg ? svg.outerHTML : '';
+          });
+
+          const svgPath = path.join(realOutputDir, `${safeBaseName}.svg`);
+          assertInsideDir(svgPath, realOutputDir);
+          fs.writeFileSync(svgPath, svgContent, 'utf-8');
+
+          return {
+            format: 'svg',
+            path: svgPath,
+            svgContent,
+          };
+        }
+
+        // Format: PNG
+        const container = (await page.$('.mermaid-standalone')) || svgElement;
+        const pngPath = path.join(realOutputDir, `${safeBaseName}.png`);
+        assertInsideDir(pngPath, realOutputDir);
+
+        const imageBuffer = await container.screenshot({
+          path: pngPath,
+          omitBackground: false,
+        });
+
+        const result: RenderDiagramResult = {
+          format: 'png',
+          path: pngPath,
+        };
+
+        if (includeBase64) {
+          result.base64 = Buffer.from(imageBuffer).toString('base64');
+        }
+
+        return result;
+      } finally {
+        await page.close();
+      }
+    } finally {
+      this.releaseExportSlot();
+    }
+  }
 }
 
 export const defaultExportService = new ExportService();
 
 export async function exportPlan(options: ExportPlanOptions): Promise<ExportResult[]> {
   return defaultExportService.exportPlan(options);
+}
+
+export async function renderDiagram(options: RenderDiagramOptions): Promise<RenderDiagramResult> {
+  return defaultExportService.renderDiagram(options);
 }
 
 export async function getBrowser(): Promise<Browser> {

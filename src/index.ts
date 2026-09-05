@@ -27,7 +27,7 @@ export type {
   RenderDiagramOptions,
   RenderDiagramResult,
 } from './types.js';
-export { ExportService, defaultExportService, exportPlan, closeBrowser, getBrowser } from './exporter.js';
+export { ExportService, defaultExportService, exportPlan, renderDiagram, closeBrowser, getBrowser } from './exporter.js';
 export { renderMarkdownToHtml, renderDiagramToHtml } from './renderer.js';
 export { ExportError, SecurityError, BrowserError } from './errors.js';
 export { CONFIG } from './config.js';
