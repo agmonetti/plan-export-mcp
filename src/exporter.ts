@@ -173,7 +173,7 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
     // Format: PDF
     if (formats.includes('pdf')) {
       const pdfPath = path.join(resolvedOutputDir, `${baseName}.pdf`);
-      await page.emulateMediaType('screen');
+      await page.emulateMediaType('print');
       await page.pdf({
         path: pdfPath,
         format: 'A4',

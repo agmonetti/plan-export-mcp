@@ -112,7 +112,12 @@ function getMermaidBundle(): string {
   for (const p of localPaths) {
     if (fs.existsSync(p)) {
       try {
-        return fs.readFileSync(p, 'utf-8');
+        const raw = fs.readFileSync(p, 'utf-8');
+        // Prevent premature script/body closure by HTML parsers & Live Server injectors
+        return raw
+          .replace(/<\/script/gi, '<\\/script')
+          .replace(/<\/body/gi, '<\\/body')
+          .replace(/<\/html/gi, '<\\/html>');
       } catch {
         // continue
       }
@@ -150,7 +155,8 @@ export function getThemeStyles(theme: Theme): string {
 
     @page {
       size: A4;
-      margin: 0;
+      margin: 18mm 16mm;
+      background-color: ${isDark ? '#0d1117' : '#ffffff'};
     }
 
     * {
@@ -172,9 +178,16 @@ export function getThemeStyles(theme: Theme): string {
     }
 
     .plan-wrapper {
-      padding: 16mm 16mm;
+      padding: 24px 32px;
       max-width: 900px;
       margin: 0 auto;
+    }
+
+    @media print {
+      .plan-wrapper {
+        padding: 0 !important;
+        max-width: 100% !important;
+      }
     }
 
     h1, h2, h3, h4, h5, h6 {
@@ -230,45 +243,6 @@ export function getThemeStyles(theme: Theme): string {
       color: var(--link-color);
       text-decoration: none;
     }
-
-    /* Badges & File Tags */
-    .badge {
-      display: inline-block;
-      padding: 2px 7px;
-      font-size: 8pt;
-      font-weight: 700;
-      border-radius: 4px;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      vertical-align: middle;
-    }
-    .badge-modify { background: rgba(210, 153, 34, 0.2); color: #e3b341; border: 1px solid rgba(210, 153, 34, 0.4); }
-    .badge-new { background: rgba(46, 160, 67, 0.2); color: #3fb950; border: 1px solid rgba(46, 160, 67, 0.4); }
-    .badge-delete { background: rgba(248, 81, 73, 0.2); color: #f85149; border: 1px solid rgba(248, 81, 73, 0.4); }
-
-    .file-name {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 9pt;
-      font-weight: 600;
-      color: #58a6ff;
-      background: var(--code-bg);
-      padding: 2px 6px;
-      border-radius: 4px;
-      border: 1px solid var(--border-color);
-    }
-
-    /* Status Pills in Tables */
-    .status-pill {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 12px;
-      font-size: 8pt;
-      font-weight: 600;
-      white-space: nowrap;
-    }
-    .status-success { background: rgba(46, 160, 67, 0.2); color: #3fb950; border: 1px solid rgba(46, 160, 67, 0.4); }
-    .status-warning { background: rgba(210, 153, 34, 0.2); color: #e3b341; border: 1px solid rgba(210, 153, 34, 0.4); }
-    .status-danger { background: rgba(248, 81, 73, 0.2); color: #f85149; border: 1px solid rgba(248, 81, 73, 0.4); }
 
     /* Task lists */
     .contains-task-list {
@@ -327,7 +301,7 @@ export function getThemeStyles(theme: Theme): string {
       word-break: break-word !important;
     }
 
-    code:not(pre code):not(.file-name) {
+    code:not(pre code) {
       font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
       font-size: 85%;
       padding: 0.15em 0.35em;
@@ -470,85 +444,59 @@ export async function renderMarkdownToHtml(markdown: string, theme: Theme = 'dar
     }
   }
 
-  // Sanitize agent file links: [Filename](file:///...) -> <code class="file-name">Filename</code>
-  let processedMarkdown = markdown.replace(/\[([^\]]+)\]\(file:\/\/[^\)]+\)/g, '<code class="file-name">$1</code>');
-
-  // Sanitize action brackets: [MODIFY], [NEW], [DELETE] -> badges
-  processedMarkdown = processedMarkdown.replace(/\[(MODIFY|NEW|DELETE)\]/g, (m, action) => {
-    const cls = action === 'NEW' ? 'badge-new' : action === 'MODIFY' ? 'badge-modify' : 'badge-delete';
-    return `<span class="badge ${cls}">${action}</span>`;
-  });
-
   const shikiTheme = theme === 'dark' ? 'github-dark' : 'github-light';
+  const hasMermaid = /(?:^|\n)```mermaid\b/.test(markdown);
 
   const md = new MarkdownIt({
     html: true,
     linkify: true,
-    highlight: (code: string, lang: string) => {
-      if (lang === 'mermaid') {
-        return `<div class="mermaid-container"><div class="mermaid">${code.trim()}</div></div>`;
-      }
-
-      const normalizedLang = lang.trim().toLowerCase();
-      const safeLang = highlighter.getLoadedLanguages().includes(normalizedLang)
-        ? normalizedLang
-        : 'text';
-
-      const highlightedCode = highlighter.codeToHtml(code, {
-        lang: safeLang,
-        theme: shikiTheme,
-      });
-
-      const displayLang = normalizedLang || 'code';
-
-      return `
-        <div class="code-card">
-          <div class="code-card-header">
-            <span>${displayLang}</span>
-          </div>
-          ${highlightedCode}
-        </div>
-      `;
-    },
   });
+
+  md.renderer.rules.fence = (tokens, idx) => {
+    const token = tokens[idx];
+    const info = token.info ? token.info.trim() : '';
+    const lang = info ? info.split(/\s+/)[0].toLowerCase() : '';
+    const code = token.content;
+
+    if (lang === 'mermaid') {
+      return `<div class="mermaid-container"><div class="mermaid">${code.trim()}</div></div>\n`;
+    }
+
+    const safeLang = highlighter.getLoadedLanguages().includes(lang) ? lang : 'text';
+    const highlightedCode = highlighter.codeToHtml(code, {
+      lang: safeLang,
+      theme: shikiTheme,
+    });
+    const displayLang = lang || 'code';
+
+    return `<div class="code-card"><div class="code-card-header"><span>${displayLang}</span></div>${highlightedCode}</div>\n`;
+  };
 
   md.use(taskLists, { enabled: true });
   md.use(githubAlertsPlugin);
 
-  let renderedContent = md.render(processedMarkdown);
+  // Normalize local IDE file links ([File](file:///...)) into clean inline code: `File`
+  const normalizedMarkdown = markdown.replace(
+    /\[([^\]]+)\]\((?:file|vscode|cursor|windsurf):\/\/[^\)]+\)/g,
+    (_, label) => {
+      const clean = label.trim().replace(/^`+|`+$/g, '');
+      return `\`${clean}\``;
+    }
+  );
 
-  // Status pills in tables
-  renderedContent = renderedContent.replace(/<td>\s*(Cumplido|Faltante Crítico|Parcial con redundancia|Parcial|Defecto de Diseño|Mal implementado en DTO|Approved|Pending|Rejected|Completed)\s*<\/td>/gi, (match, status) => {
-    const s = status.toLowerCase();
-    let pillClass = 'status-warning';
-    if (s.includes('cumplido') || s.includes('approved') || s.includes('completed')) pillClass = 'status-success';
-    else if (s.includes('crítico') || s.includes('defecto') || s.includes('mal') || s.includes('rejected')) pillClass = 'status-danger';
-    return `<td><span class="status-pill ${pillClass}">${status}</span></td>`;
-  });
-
+  const renderedContent = md.render(normalizedMarkdown);
   const styles = getThemeStyles(theme);
 
-  const localMermaid = getMermaidBundle();
-  const mermaidScriptTag = localMermaid
-    ? `<script>${localMermaid}</script>`
-    : `<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>`;
+  let mermaidAssets = '';
+  if (hasMermaid) {
+    const localMermaid = getMermaidBundle();
+    const mermaidScriptTag = localMermaid
+      ? `<script>${localMermaid}</script>`
+      : `<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>`;
 
-  const mermaidTheme = theme === 'dark' ? 'dark' : 'default';
+    const mermaidTheme = theme === 'dark' ? 'dark' : 'default';
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Implementation Plan</title>
-  <style>
-    ${styles}
-  </style>
-</head>
-<body>
-  <div class="plan-wrapper">
-    ${renderedContent}
-  </div>
+    mermaidAssets = `
   ${mermaidScriptTag}
   <script>
     if (window.mermaid) {
@@ -569,7 +517,23 @@ export async function renderMarkdownToHtml(markdown: string, theme: Theme = 'dar
       });
       mermaid.run();
     }
-  </script>
+  </script>`;
+  }
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Implementation Plan</title>
+  <style>
+    ${styles}
+  </style>
+</head>
+<body>
+  <div class="plan-wrapper">
+    ${renderedContent}
+  </div>${mermaidAssets}
 </body>
 </html>`;
 }
