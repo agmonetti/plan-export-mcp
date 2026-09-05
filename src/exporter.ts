@@ -28,32 +28,48 @@ const ALLOWED_INPUT_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkd', 
 export function resolveSafeMarkdownInput(input: string): { content: string; derivedName?: string } {
   if (typeof input === 'string' && input.length < 4096 && !input.includes('\n')) {
     const trimmed = input.trim();
-    const isPath =
-      trimmed.startsWith('.') ||
-      trimmed.startsWith('/') ||
-      trimmed.includes('/') ||
-      trimmed.includes('\\') ||
-      fs.existsSync(trimmed);
+    if (trimmed.includes('\0')) {
+      throw new Error('Security Exception: Null bytes are not permitted in path input.');
+    }
+
+    const hasPathSeparator = trimmed.includes('/') || trimmed.includes('\\');
+    const ext = path.extname(trimmed).toLowerCase();
+    const isPath = trimmed.startsWith('.') || hasPathSeparator || ALLOWED_INPUT_EXTENSIONS.has(ext);
 
     if (isPath) {
-      const resolvedPath = path.resolve(process.cwd(), trimmed);
-      const rel = path.relative(process.cwd(), resolvedPath);
+      const cwd = path.resolve(process.cwd());
+      if (cwd === path.parse(cwd).root) {
+        throw new Error('Security Exception: Operating directly at filesystem root is not permitted.');
+      }
 
-      if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      const resolvedPath = path.isAbsolute(trimmed)
+        ? path.resolve(trimmed)
+        : path.resolve(cwd, trimmed);
+
+      const rel = path.relative(cwd, resolvedPath);
+      if (rel.startsWith('..') || path.isAbsolute(rel) || resolvedPath === cwd) {
         throw new Error(
           `Security Exception: Access denied. Cannot read file outside the project workspace: "${trimmed}".`
         );
       }
 
-      const ext = path.extname(resolvedPath).toLowerCase();
-      if (!ALLOWED_INPUT_EXTENSIONS.has(ext)) {
+      const fileExt = path.extname(resolvedPath).toLowerCase();
+      if (!ALLOWED_INPUT_EXTENSIONS.has(fileExt)) {
         throw new Error(
-          `Security Exception: Invalid file extension "${ext}". Only Markdown and text files (.md, .markdown, .txt) are permitted.`
+          `Security Exception: Invalid file extension "${fileExt}". Only Markdown and text files (.md, .markdown, .txt) are permitted.`
         );
       }
 
       if (fs.existsSync(resolvedPath)) {
-        const stat = fs.statSync(resolvedPath);
+        const realPath = fs.realpathSync(resolvedPath);
+        const realRel = path.relative(cwd, realPath);
+        if (realRel.startsWith('..') || path.isAbsolute(realRel)) {
+          throw new Error(
+            `Security Exception: Access denied. Target file or symlink resolves outside the project workspace.`
+          );
+        }
+
+        const stat = fs.statSync(realPath);
         if (!stat.isFile()) {
           throw new Error(`Invalid input: Path is not a regular file: "${trimmed}".`);
         }
@@ -61,8 +77,8 @@ export function resolveSafeMarkdownInput(input: string): { content: string; deri
           throw new Error(`Input file exceeds maximum allowed size of 10MB: "${trimmed}".`);
         }
         return {
-          content: fs.readFileSync(resolvedPath, 'utf-8'),
-          derivedName: path.basename(resolvedPath, ext),
+          content: fs.readFileSync(realPath, 'utf-8'),
+          derivedName: path.basename(resolvedPath, fileExt),
         };
       } else {
         throw new Error(`File not found within workspace: "${trimmed}".`);

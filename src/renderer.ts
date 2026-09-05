@@ -1,10 +1,54 @@
 import MarkdownIt from 'markdown-it';
 import taskLists from 'markdown-it-task-lists';
 import { createHighlighter, bundledLanguages, type Highlighter } from 'shiki';
+import sanitizeHtml from 'sanitize-html';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Theme } from './types.js';
+
+const SANITIZE_HTML_OPTIONS: sanitizeHtml.IOptions = {
+  allowedTags: [
+    ...sanitizeHtml.defaults.allowedTags,
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'img', 'svg', 'path',
+    'input',
+    'details', 'summary',
+    'kbd', 'del', 'ins', 'sub', 'sup',
+  ],
+  allowedAttributes: {
+    ...sanitizeHtml.defaults.allowedAttributes,
+    '*': ['class', 'id', 'aria-*', 'role'],
+    pre: ['style', 'tabindex'],
+    span: ['style'],
+    code: ['style'],
+    svg: ['class', 'viewbox', 'viewBox', 'width', 'height', 'fill', 'xmlns'],
+    path: ['d', 'fill', 'fill-rule', 'clip-rule'],
+    input: ['type', 'checked', 'disabled', 'class'],
+    a: ['href', 'name', 'target', 'rel'],
+    img: ['src', 'alt', 'title', 'width', 'height', 'loading'],
+    div: ['class', 'style'],
+    table: ['class', 'style'],
+    th: ['style', 'align', 'colspan', 'rowspan'],
+    td: ['style', 'align', 'colspan', 'rowspan'],
+    details: ['open'],
+  },
+  allowedStyles: {
+    '*': {
+      'color': [/.*/],
+      'background-color': [/.*/],
+      'text-align': [/.*/],
+      'font-weight': [/.*/],
+      'width': [/.*/],
+      'height': [/.*/],
+    },
+  },
+  allowedSchemes: ['http', 'https', 'mailto'],
+  allowedSchemesByTag: {
+    img: ['http', 'https', 'data'],
+  },
+  disallowedTagsMode: 'discard',
+};
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -491,7 +535,8 @@ export async function renderMarkdownToHtml(markdown: string, theme: Theme = 'dar
     }
   );
 
-  const renderedContent = md.render(normalizedMarkdown);
+  const rawRenderedContent = md.render(normalizedMarkdown);
+  const renderedContent = sanitizeHtml(rawRenderedContent, SANITIZE_HTML_OPTIONS);
   const styles = getThemeStyles(theme);
 
   let mermaidAssets = '';
@@ -510,7 +555,7 @@ export async function renderMarkdownToHtml(markdown: string, theme: Theme = 'dar
       mermaid.initialize({
         startOnLoad: true,
         theme: '${mermaidTheme}',
-        securityLevel: 'loose',
+        securityLevel: 'strict',
         themeVariables: {
           darkMode: ${theme === 'dark'},
           background: '${theme === 'dark' ? '#161b22' : '#ffffff'}',
