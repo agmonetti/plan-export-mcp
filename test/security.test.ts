@@ -18,6 +18,7 @@ import {
   ExportError,
   SecurityError,
   BrowserError,
+  CONFIG,
 } from '../src/index.js';
 
 describe('Security & Input Validation Tests', () => {
@@ -332,6 +333,20 @@ describe('Security & Input Validation Tests', () => {
         () => resolveSafeMarkdownInput('/etc/shadow'),
         (err: any) => err instanceof SecurityError && err.code === 'RESTRICTED_PATH'
       );
+    });
+  });
+
+  describe('Centralized Configuration (CONFIG)', () => {
+    it('should define robust default limits and timeouts', () => {
+      assert.equal(CONFIG.limits.maxInputBytes, 10 * 1024 * 1024);
+      assert.equal(CONFIG.limits.maxConcurrentExports, 2);
+      assert.equal(CONFIG.limits.maxQueueSize, 20);
+      assert.equal(CONFIG.timeouts.operationMs, 15000);
+      assert.equal(CONFIG.timeouts.mermaidMs, 6000);
+      assert.equal(CONFIG.defaults.theme, 'dark');
+      assert.deepEqual(CONFIG.defaults.formats, ['png', 'pdf']);
+      assert.ok(CONFIG.allowedExtensions.has('.md'));
+      assert.ok(CONFIG.commonChromePaths.length > 0);
     });
   });
 

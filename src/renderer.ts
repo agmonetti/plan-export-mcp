@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Theme } from './types.js';
+import { CONFIG } from './config.js';
 
 const SANITIZE_HTML_OPTIONS: sanitizeHtml.IOptions = {
   allowedTags: [
@@ -512,11 +513,10 @@ export async function renderMarkdownToHtml(
   const highlighter = await getHighlighter();
 
   // Scan and dynamically load any language found in markdown code blocks (capped to prevent memory exhaustion)
-  const MAX_DYNAMIC_LANGS = 20;
   let loadedLangsCount = 0;
   const langMatches = markdown.matchAll(/```([a-zA-Z0-9_-]+)/g);
   for (const match of langMatches) {
-    if (loadedLangsCount >= MAX_DYNAMIC_LANGS) break;
+    if (loadedLangsCount >= CONFIG.limits.maxDynamicLangs) break;
     const rawLang = match[1].toLowerCase().trim();
     if (rawLang && rawLang !== 'mermaid' && !highlighter.getLoadedLanguages().includes(rawLang)) {
       if (rawLang in bundledLanguages) {
@@ -582,10 +582,8 @@ export async function renderMarkdownToHtml(
     // Hybrid: In standalone exported HTML, use official CDN to keep file lightweight (~30KB)
     // In Puppeteer (offline/headless export), use bundled script for speed and network isolation
     const useCdn = options.standaloneHtml === true || !localMermaid;
-    const MERMAID_VERSION = '11.17.2';
-    const MERMAID_SRI = 'sha384-EOXBFmc3gx5mb+vn0vPvvGqACToJD24hhacX5Yx+8NUUQrHIle/Qi5Bg9o3zKwW2';
     const mermaidScriptTag = useCdn
-      ? `<script src="https://cdn.jsdelivr.net/npm/mermaid@${MERMAID_VERSION}/dist/mermaid.min.js" integrity="${MERMAID_SRI}" crossorigin="anonymous"></script>`
+      ? `<script src="https://cdn.jsdelivr.net/npm/mermaid@${CONFIG.mermaid.version}/dist/mermaid.min.js" integrity="${CONFIG.mermaid.sri}" crossorigin="anonymous"></script>`
       : `<script>${localMermaid}</script>`;
 
     const mermaidTheme = theme === 'dark' ? 'dark' : 'default';

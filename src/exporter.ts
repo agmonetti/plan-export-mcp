@@ -1,32 +1,13 @@
 import puppeteer, { type Browser } from 'puppeteer';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { renderMarkdownToHtml } from './renderer.js';
 import type { ExportPlanOptions, ExportResult, Theme, ExportFormat } from './types.js';
 import { ExportError, SecurityError, BrowserError } from './errors.js';
+import { CONFIG } from './config.js';
 
 let sharedBrowser: Browser | null = null;
-
-const COMMON_CHROME_PATHS: string[] = [
-  // Linux
-  '/usr/bin/google-chrome-stable',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium',
-  '/usr/bin/chromium-browser',
-  '/snap/bin/chromium',
-  // macOS
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  // Windows
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-  'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-];
-
-import os from 'os';
-
-const MAX_INPUT_BYTES = 10 * 1024 * 1024; // 10MB limit
-const ALLOWED_INPUT_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkd', '.txt']);
 
 export function expandHome(filePath: string): string {
   if (filePath === '~' || filePath.startsWith('~/')) {
@@ -94,7 +75,7 @@ export function isSystemOrRestrictedPath(targetPath: string): boolean {
 export function resolveSafeMarkdownInput(input: string): { content: string; derivedName?: string } {
   // If input contains newlines, it is definitely raw markdown content, not a filesystem path
   if (typeof input === 'string' && input.includes('\n')) {
-    if (Buffer.byteLength(input, 'utf-8') > MAX_INPUT_BYTES) {
+    if (Buffer.byteLength(input, 'utf-8') > CONFIG.limits.maxInputBytes) {
       throw new ExportError(`Markdown input exceeds maximum allowed size of 10MB.`, 'INPUT_TOO_LARGE');
     }
     return { content: input };
@@ -107,7 +88,7 @@ export function resolveSafeMarkdownInput(input: string): { content: string; deri
     }
 
     const ext = path.extname(trimmed).toLowerCase();
-    const isExplicitFileExt = ALLOWED_INPUT_EXTENSIONS.has(ext);
+    const isExplicitFileExt = CONFIG.allowedExtensions.has(ext);
 
     const cwd = path.resolve(process.cwd());
     const expanded = expandHome(trimmed);
@@ -161,14 +142,14 @@ export function resolveSafeMarkdownInput(input: string): { content: string; deri
         }
 
         const fileExt = path.extname(realPath).toLowerCase();
-        if (!ALLOWED_INPUT_EXTENSIONS.has(fileExt)) {
+        if (!CONFIG.allowedExtensions.has(fileExt)) {
           throw new SecurityError(
             `Security Exception: Invalid file extension "${fileExt}". Only Markdown and text files (.md, .markdown, .txt) are permitted.`,
             'INVALID_EXTENSION'
           );
         }
 
-        if (stat.size > MAX_INPUT_BYTES) {
+        if (stat.size > CONFIG.limits.maxInputBytes) {
           throw new ExportError(`Input file exceeds maximum allowed size of 10MB: "${trimmed}".`, 'INPUT_TOO_LARGE');
         }
 
@@ -197,7 +178,7 @@ export function resolveSafeMarkdownInput(input: string): { content: string; deri
     }
   }
 
-  if (Buffer.byteLength(input, 'utf-8') > MAX_INPUT_BYTES) {
+  if (Buffer.byteLength(input, 'utf-8') > CONFIG.limits.maxInputBytes) {
     throw new ExportError(`Markdown input exceeds maximum allowed size of 10MB.`, 'INPUT_TOO_LARGE');
   }
 
@@ -257,7 +238,7 @@ export function resolveExecutablePath(): string | undefined {
   }
 
   // 3. System Chromium / Chrome / Edge fallback if available on the host
-  for (const p of COMMON_CHROME_PATHS) {
+  for (const p of CONFIG.commonChromePaths) {
     if (fs.existsSync(p)) {
       return p;
     }
@@ -266,14 +247,7 @@ export function resolveExecutablePath(): string | undefined {
   return undefined;
 }
 
-const OPERATION_TIMEOUT_MS = 15000;
-const MERMAID_TIMEOUT_MS = 6000;
-const BROWSER_LAUNCH_TIMEOUT_MS = 15000;
-const BROWSER_IDLE_TIMEOUT_MS = 60000; // Auto-close Chromium after 60s idle to free RAM
-
 // Concurrency control: limit simultaneous browser export tasks to prevent RAM exhaustion
-const MAX_CONCURRENT_EXPORTS = 2;
-const MAX_QUEUE_SIZE = 20;
 let activeExports = 0;
 const waitQueue: Array<() => void> = [];
 let browserIdleTimer: NodeJS.Timeout | null = null;
@@ -288,7 +262,7 @@ export function resetBrowserIdleTimer(): void {
       if (activeExports === 0 && sharedBrowser) {
         closeBrowser().catch(() => {});
       }
-    }, BROWSER_IDLE_TIMEOUT_MS);
+    }, CONFIG.timeouts.browserIdleMs);
     if (browserIdleTimer && typeof browserIdleTimer.unref === 'function') {
       browserIdleTimer.unref();
     }
@@ -300,13 +274,13 @@ async function acquireExportSlot(): Promise<void> {
     clearTimeout(browserIdleTimer);
     browserIdleTimer = null;
   }
-  if (activeExports < MAX_CONCURRENT_EXPORTS) {
+  if (activeExports < CONFIG.limits.maxConcurrentExports) {
     activeExports++;
     return;
   }
-  if (waitQueue.length >= MAX_QUEUE_SIZE) {
+  if (waitQueue.length >= CONFIG.limits.maxQueueSize) {
     throw new ExportError(
-      'Export capacity exceeded: Concurrency queue is full (max 20 pending requests). Please retry shortly.',
+      `Export capacity exceeded: Concurrency queue is full (max ${CONFIG.limits.maxQueueSize} pending requests). Please retry shortly.`,
       'CAPACITY_EXCEEDED'
     );
   }
@@ -320,7 +294,7 @@ async function acquireExportSlot(): Promise<void> {
 
 function releaseExportSlot(): void {
   activeExports--;
-  if (waitQueue.length > 0 && activeExports < MAX_CONCURRENT_EXPORTS) {
+  if (waitQueue.length > 0 && activeExports < CONFIG.limits.maxConcurrentExports) {
     const next = waitQueue.shift();
     if (next) next();
   } else if (activeExports === 0) {
@@ -393,8 +367,8 @@ export async function getBrowser(): Promise<Browser> {
 
     const timeoutPromise = new Promise<never>((_, reject) => {
       const t = setTimeout(() => {
-        reject(new Error(`Timed out after ${BROWSER_LAUNCH_TIMEOUT_MS / 1000}s attempting to launch headless browser.`));
-      }, BROWSER_LAUNCH_TIMEOUT_MS);
+        reject(new Error(`Timed out after ${CONFIG.timeouts.browserLaunchMs / 1000}s attempting to launch headless browser.`));
+      }, CONFIG.timeouts.browserLaunchMs);
       if (typeof t.unref === 'function') t.unref();
     });
 
@@ -468,9 +442,9 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
   try {
     const {
       input,
-      theme = 'dark',
-      formats = ['png', 'pdf'],
-      outputDir = './exports',
+      theme = CONFIG.defaults.theme,
+      formats = [...CONFIG.defaults.formats],
+      outputDir = CONFIG.defaults.outputDir,
       outputName,
     } = options;
 
@@ -548,7 +522,7 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
       });
 
       // Defensive default timeout for all page operations
-      page.setDefaultTimeout(OPERATION_TIMEOUT_MS);
+      page.setDefaultTimeout(CONFIG.timeouts.operationMs);
 
       // Attack surface reduction: disable JavaScript entirely when Mermaid diagrams are not present
       const hasMermaid = browserHtml.includes('class="mermaid');
@@ -558,7 +532,7 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
 
       // 2x Retina DPR for crisp, high-density display
       await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 2 });
-      await page.setContent(browserHtml, { waitUntil: 'load', timeout: OPERATION_TIMEOUT_MS });
+      await page.setContent(browserHtml, { waitUntil: 'load', timeout: CONFIG.timeouts.operationMs });
 
       // Wait for Mermaid diagrams if present
       if (hasMermaid) {
@@ -569,7 +543,7 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
               if (diagrams.length === 0) return true;
               return Array.from(diagrams).every((d) => d.querySelector('svg'));
             },
-            { timeout: MERMAID_TIMEOUT_MS }
+            { timeout: CONFIG.timeouts.mermaidMs }
           )
           .catch(() => {
             // Fallback: proceed if mermaid takes too long or isn't present
