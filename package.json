@@ -8,6 +8,18 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "author": "agmonetti",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agmonetti/plan-export-mcp.git"
+  },
+  "homepage": "https://github.com/agmonetti/plan-export-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/agmonetti/plan-export-mcp/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "files": [
     "dist"
   ],

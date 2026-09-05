@@ -5,3 +5,36 @@ startCommand:
     args:
       - "-y"
       - "plan-export-mcp"
+
+name: plan-export-mcp
+description: "Export AI agent plans and architectural audits to beautiful PDFs, high-res PNGs, and self-contained HTML files."
+tools:
+  - name: export_plan
+    description: "Export an AI agent implementation plan or audit (Markdown) to styled PDF, high-res PNG, or self-contained HTML matching IDE aesthetics."
+    inputSchema:
+      type: object
+      properties:
+        input:
+          type: string
+          description: "Path to the markdown file (relative to workspace) OR raw markdown text content"
+        theme:
+          type: string
+          enum: ["dark", "light"]
+          default: "dark"
+          description: 'Visual theme: "dark" (GitHub Dark) or "light" (GitHub Light)'
+        formats:
+          type: array
+          items:
+            type: string
+            enum: ["pdf", "png", "html"]
+          default: ["png", "pdf"]
+          description: 'List of export formats: ["png", "pdf", "html"]'
+        outputDir:
+          type: string
+          default: "./exports"
+          description: "Directory relative to workspace where exported files will be saved"
+        outputName:
+          type: string
+          description: 'Base filename for exports without extension. Default: derived from input or "plan"'
+      required:
+        - input
