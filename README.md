@@ -155,11 +155,6 @@ Your AI agent can invoke this tool directly:
 - **Headless Engine:** Puppeteer with intelligent fallback to system Chrome/Chromium.
 
 ---
-## Preview
-
-| Dark Theme (GitHub Dark / VS Code style) | Light Theme (GitHub Light style) |
-|:---:|:---:|
-| <img src="assets/preview-dark.png" width="235"> | <img src="assets/preview-light.png" width="250"> |
 
 ## License
 
