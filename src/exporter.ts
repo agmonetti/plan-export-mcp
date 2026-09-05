@@ -399,6 +399,31 @@ function handleExitSignal(): void {
 process.on('SIGINT', handleExitSignal);
 process.on('SIGTERM', handleExitSignal);
 
+export function isAllowedBrowserUrl(urlStr: string): boolean {
+  if (urlStr.startsWith('data:') || urlStr.startsWith('blob:') || urlStr === 'about:blank') {
+    return true;
+  }
+  try {
+    const parsed = new URL(urlStr);
+    if (parsed.protocol !== 'https:') {
+      return false;
+    }
+    // Strict hostname and path validation for Mermaid CDN with no credentials or unusual ports
+    if (
+      parsed.hostname === 'cdn.jsdelivr.net' &&
+      !parsed.username &&
+      !parsed.password &&
+      (!parsed.port || parsed.port === '443') &&
+      parsed.pathname.startsWith('/npm/mermaid@')
+    ) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export async function exportPlan(options: ExportPlanOptions): Promise<ExportResult[]> {
   await acquireExportSlot();
   try {
@@ -463,49 +488,14 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
     const page = await browser.newPage();
 
     try {
-      // Network isolation & anti-SSRF request interception
+      // Network isolation & strict allowlist anti-SSRF request interception
       await page.setRequestInterception(true);
       page.on('request', (req) => {
-        const urlStr = req.url();
-
-        // Allow safe internal data/blob protocols and initial document
-        if (urlStr.startsWith('data:') || urlStr.startsWith('blob:') || urlStr === 'about:blank') {
+        if (isAllowedBrowserUrl(req.url())) {
           req.continue();
-          return;
+        } else {
+          req.abort('blockedbyclient');
         }
-
-        // Allow official Mermaid CDN only if needed
-        if (urlStr.startsWith('https://cdn.jsdelivr.net/npm/mermaid@')) {
-          req.continue();
-          return;
-        }
-
-        // Block local filesystem access and private IP ranges (SSRF)
-        try {
-          const parsed = new URL(urlStr);
-          const hostname = parsed.hostname.toLowerCase();
-
-          const isPrivateOrLoopback =
-            parsed.protocol === 'file:' ||
-            hostname === 'localhost' ||
-            hostname === '127.0.0.1' ||
-            hostname === '0.0.0.0' ||
-            hostname === '169.254.169.254' ||
-            /^10\./.test(hostname) ||
-            /^192\.168\./.test(hostname) ||
-            /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname);
-
-          if (isPrivateOrLoopback) {
-            req.abort('accessdenied');
-            return;
-          }
-        } catch {
-          req.abort('accessdenied');
-          return;
-        }
-
-        // Block all other unauthorized external requests
-        req.abort('blockedbyclient');
       });
 
       // Defensive default timeout for all page operations

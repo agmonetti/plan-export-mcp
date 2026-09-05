@@ -10,6 +10,7 @@ import {
   resetBrowserIdleTimer,
   closeBrowser,
   exportPlan,
+  isAllowedBrowserUrl,
 } from '../src/exporter.js';
 import { sanitizeErrorMessage } from '../src/index.js';
 
@@ -242,6 +243,40 @@ describe('Security & Input Validation Tests', () => {
       const sanitized = sanitizeErrorMessage(err);
       assert.ok(!sanitized.includes('john_doe'));
       assert.ok(sanitized.includes('/home/[user]/.ssh/id_rsa'));
+    });
+  });
+
+  describe('isAllowedBrowserUrl SSRF allowlist', () => {
+    it('should allow internal data, blob, and about:blank URLs', () => {
+      assert.equal(isAllowedBrowserUrl('data:image/svg+xml;utf8,<svg></svg>'), true);
+      assert.equal(isAllowedBrowserUrl('blob:https://example.com/uuid'), true);
+      assert.equal(isAllowedBrowserUrl('about:blank'), true);
+    });
+
+    it('should allow official Mermaid CDN URLs via HTTPS', () => {
+      assert.equal(
+        isAllowedBrowserUrl('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js'),
+        true
+      );
+      assert.equal(
+        isAllowedBrowserUrl('https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.min.js'),
+        true
+      );
+    });
+
+    it('should block local network, loopback, and IPv6 addresses (anti-SSRF)', () => {
+      assert.equal(isAllowedBrowserUrl('http://127.0.0.1:8080/secret'), false);
+      assert.equal(isAllowedBrowserUrl('http://localhost:3000'), false);
+      assert.equal(isAllowedBrowserUrl('http://[::1]/'), false);
+      assert.equal(isAllowedBrowserUrl('http://169.254.169.254/latest/meta-data/'), false);
+      assert.equal(isAllowedBrowserUrl('file:///etc/passwd'), false);
+    });
+
+    it('should block unauthorized external domains and malicious host spoofing', () => {
+      assert.equal(isAllowedBrowserUrl('https://evil.com/npm/mermaid@11'), false);
+      assert.equal(isAllowedBrowserUrl('https://cdn.jsdelivr.net@127.0.0.1/npm/mermaid@11'), false);
+      assert.equal(isAllowedBrowserUrl('http://cdn.jsdelivr.net/npm/mermaid@11'), false);
+      assert.equal(isAllowedBrowserUrl('https://cdn.jsdelivr.net:8443/npm/mermaid@11'), false);
     });
   });
 
