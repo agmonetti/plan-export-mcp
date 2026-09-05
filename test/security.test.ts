@@ -58,6 +58,23 @@ describe('Security & Input Validation Tests', () => {
       );
     });
 
+    it('should reject symlinks targeting restricted system files', () => {
+      const symlinkPath = path.resolve('test-symlink.md');
+      try {
+        fs.symlinkSync('/etc/passwd', symlinkPath);
+        assert.throws(
+          () => resolveSafeMarkdownInput(symlinkPath),
+          /Security Exception/
+        );
+      } finally {
+        try {
+          fs.unlinkSync(symlinkPath);
+        } catch {
+          // ignore
+        }
+      }
+    });
+
     it('should accept and load valid markdown files within workspace (relative and absolute)', () => {
       const relResult = resolveSafeMarkdownInput('sample-plan.md');
       assert.ok(relResult.content.length > 0);

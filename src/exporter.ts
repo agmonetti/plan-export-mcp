@@ -114,7 +114,6 @@ export function resolveSafeMarkdownInput(input: string): { content: string; deri
       ? path.normalize(expanded)
       : path.resolve(cwd, expanded);
 
-    const fileExists = fs.existsSync(candidatePath);
     const hasPathIndicator =
       trimmed.startsWith('~') ||
       trimmed.startsWith('.') ||
@@ -124,47 +123,72 @@ export function resolveSafeMarkdownInput(input: string): { content: string; deri
       isExplicitFileExt;
 
     // Eagerly reject any attempt to target restricted system or credential paths
-    if (isSystemOrRestrictedPath(candidatePath) && (hasPathIndicator || fileExists)) {
+    if (isSystemOrRestrictedPath(candidatePath) && hasPathIndicator) {
       throw new Error(
         `Security Exception: Access denied. Cannot access restricted system or credential path: "${trimmed}".`
       );
     }
 
-    // Only treat input as path if:
-    // 1) It has an allowed explicit markdown/text file extension (.md, .txt, etc.)
-    // OR 2) It actually exists on disk as a file or directory
-    const isPath = isExplicitFileExt || fileExists;
+    let realPath: string | null = null;
+    try {
+      realPath = fs.realpathSync(candidatePath);
+    } catch {
+      // Path does not exist
+      if (isExplicitFileExt) {
+        throw new Error(`File not found: "${trimmed}".`);
+      }
+    }
 
-    if (isPath) {
-      const resolvedPath = candidatePath;
+    if (realPath !== null) {
+      // Eagerly verify resolved real path is not a restricted system or credential path
+      if (isSystemOrRestrictedPath(realPath)) {
+        throw new Error(
+          `Security Exception: Access denied. Target file or symlink resolves to a restricted path.`
+        );
+      }
 
-      if (fileExists) {
-        const realPath = fs.realpathSync(resolvedPath);
-        if (isSystemOrRestrictedPath(realPath)) {
-          throw new Error(
-            `Security Exception: Access denied. Target file or symlink resolves to a restricted path.`
-          );
-        }
+      let fd: number | null = null;
+      try {
+        // Open file descriptor atomically to eliminate TOCTOU symlink races
+        fd = fs.openSync(realPath, 'r');
+        const stat = fs.fstatSync(fd);
 
-        const stat = fs.statSync(realPath);
         if (!stat.isFile()) {
           throw new Error(`Invalid input: Path is not a regular file: "${trimmed}".`);
         }
+
         const fileExt = path.extname(realPath).toLowerCase();
         if (!ALLOWED_INPUT_EXTENSIONS.has(fileExt)) {
           throw new Error(
             `Security Exception: Invalid file extension "${fileExt}". Only Markdown and text files (.md, .markdown, .txt) are permitted.`
           );
         }
+
         if (stat.size > MAX_INPUT_BYTES) {
           throw new Error(`Input file exceeds maximum allowed size of 10MB: "${trimmed}".`);
         }
+
+        // Read content directly from open file descriptor
+        const buffer = Buffer.alloc(stat.size);
+        let bytesRead = 0;
+        while (bytesRead < stat.size) {
+          const chunk = fs.readSync(fd, buffer, bytesRead, stat.size - bytesRead, bytesRead);
+          if (chunk === 0) break;
+          bytesRead += chunk;
+        }
+
         return {
-          content: fs.readFileSync(realPath, 'utf-8'),
-          derivedName: path.basename(resolvedPath, path.extname(resolvedPath)),
+          content: buffer.subarray(0, bytesRead).toString('utf-8'),
+          derivedName: path.basename(candidatePath, path.extname(candidatePath)),
         };
-      } else if (isExplicitFileExt) {
-        throw new Error(`File not found: "${trimmed}".`);
+      } finally {
+        if (fd !== null) {
+          try {
+            fs.closeSync(fd);
+          } catch {
+            // ignore
+          }
+        }
       }
     }
   }
