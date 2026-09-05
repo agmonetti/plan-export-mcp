@@ -23,6 +23,59 @@ const COMMON_CHROME_PATHS: string[] = [
 ];
 
 const MAX_INPUT_BYTES = 10 * 1024 * 1024; // 10MB limit
+const ALLOWED_INPUT_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkd', '.txt']);
+
+export function resolveSafeMarkdownInput(input: string): { content: string; derivedName?: string } {
+  if (typeof input === 'string' && input.length < 4096 && !input.includes('\n')) {
+    const trimmed = input.trim();
+    const isPath =
+      trimmed.startsWith('.') ||
+      trimmed.startsWith('/') ||
+      trimmed.includes('/') ||
+      trimmed.includes('\\') ||
+      fs.existsSync(trimmed);
+
+    if (isPath) {
+      const resolvedPath = path.resolve(process.cwd(), trimmed);
+      const rel = path.relative(process.cwd(), resolvedPath);
+
+      if (rel.startsWith('..') || path.isAbsolute(rel)) {
+        throw new Error(
+          `Security Exception: Access denied. Cannot read file outside the project workspace: "${trimmed}".`
+        );
+      }
+
+      const ext = path.extname(resolvedPath).toLowerCase();
+      if (!ALLOWED_INPUT_EXTENSIONS.has(ext)) {
+        throw new Error(
+          `Security Exception: Invalid file extension "${ext}". Only Markdown and text files (.md, .markdown, .txt) are permitted.`
+        );
+      }
+
+      if (fs.existsSync(resolvedPath)) {
+        const stat = fs.statSync(resolvedPath);
+        if (!stat.isFile()) {
+          throw new Error(`Invalid input: Path is not a regular file: "${trimmed}".`);
+        }
+        if (stat.size > MAX_INPUT_BYTES) {
+          throw new Error(`Input file exceeds maximum allowed size of 10MB: "${trimmed}".`);
+        }
+        return {
+          content: fs.readFileSync(resolvedPath, 'utf-8'),
+          derivedName: path.basename(resolvedPath, ext),
+        };
+      } else {
+        throw new Error(`File not found within workspace: "${trimmed}".`);
+      }
+    }
+  }
+
+  if (Buffer.byteLength(input, 'utf-8') > MAX_INPUT_BYTES) {
+    throw new Error(`Markdown input exceeds maximum allowed size of 10MB.`);
+  }
+
+  return { content: input };
+}
 
 export function sanitizeBaseName(rawName: string): string {
   const base = path.basename(rawName).trim();
@@ -119,28 +172,8 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
     outputName,
   } = options;
 
-  let markdownContent = input;
-  let baseName = outputName;
-
-  // Check if input is a file path
-  if (typeof input === 'string' && input.length < 4096 && fs.existsSync(input)) {
-    const stat = fs.statSync(input);
-    if (stat.isFile()) {
-      if (stat.size > MAX_INPUT_BYTES) {
-        throw new Error(`Input file exceeds maximum allowed size of 10MB: ${input}`);
-      }
-      markdownContent = fs.readFileSync(input, 'utf-8');
-      if (!baseName) {
-        baseName = path.basename(input, path.extname(input));
-      }
-    }
-  }
-
-  if (Buffer.byteLength(markdownContent, 'utf-8') > MAX_INPUT_BYTES) {
-    throw new Error(`Markdown input exceeds maximum allowed size of 10MB.`);
-  }
-
-  const safeBaseName = sanitizeBaseName(baseName || `plan-${Date.now()}`);
+  const { content: markdownContent, derivedName } = resolveSafeMarkdownInput(input);
+  const safeBaseName = sanitizeBaseName(outputName || derivedName || `plan-${Date.now()}`);
 
   // Ensure output directory exists
   const resolvedOutputDir = path.resolve(process.cwd(), outputDir);

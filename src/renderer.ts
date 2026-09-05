@@ -444,10 +444,12 @@ export async function renderMarkdownToHtml(markdown: string, theme: Theme = 'dar
     }
   }
 
-  // Neutralize hazardous executable elements (<script>, <iframe>, <object>, <embed>, <base>)
+  // Neutralize hazardous elements, inline event handlers, and javascript: links
   const sanitizedMarkdown = markdown
     .replace(/<\s*(script|iframe|object|embed|applet|base)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
-    .replace(/<\s*(script|iframe|object|embed|applet|base)\b[^>]*\/?>/gi, '');
+    .replace(/<\s*(script|iframe|object|embed|applet|base)\b[^>]*\/?>/gi, '')
+    .replace(/\bon[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\bhref\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*'|javascript:[^\s>]+)/gi, 'href="#"');
 
   const shikiTheme = theme === 'dark' ? 'github-dark' : 'github-light';
   const hasMermaid = /(?:^|\n)```mermaid\b/.test(sanitizedMarkdown);
@@ -530,6 +532,7 @@ export async function renderMarkdownToHtml(markdown: string, theme: Theme = 'dar
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; img-src data: https:; font-src data:;">
   <title>Implementation Plan</title>
   <style>
     ${styles}
