@@ -34,7 +34,8 @@ When coding agents (**Cursor**, **Claude Code**, **Pi**, **Windsurf**, **Aider**
 ### Prerequisites
 - Node.js 18+
 - npm, pnpm, or yarn
-- Google Chrome or Chromium installed on the host system
+
+*(Note: HTML exports run in pure Node.js with zero browser dependencies. For PDF/PNG rendering, Puppeteer manages a lightweight headless browser automatically or uses system Chromium if present).*
 
 ---
 

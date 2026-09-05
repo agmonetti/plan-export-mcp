@@ -91,16 +91,12 @@ export function assertInsideDir(filePath: string, targetDir: string): void {
 }
 
 export function resolveExecutablePath(): string | undefined {
+  // 1. Explicit user-configured environment variable takes precedence
   if (process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
     return process.env.PUPPETEER_EXECUTABLE_PATH;
   }
 
-  for (const p of COMMON_CHROME_PATHS) {
-    if (fs.existsSync(p)) {
-      return p;
-    }
-  }
-
+  // 2. Puppeteer's own managed headless shell / cache
   try {
     const puppeteerPath = puppeteer.executablePath();
     if (fs.existsSync(puppeteerPath)) {
@@ -108,6 +104,13 @@ export function resolveExecutablePath(): string | undefined {
     }
   } catch {
     // continue
+  }
+
+  // 3. System Chromium / Chrome / Edge fallback if available on the host
+  for (const p of COMMON_CHROME_PATHS) {
+    if (fs.existsSync(p)) {
+      return p;
+    }
   }
 
   return undefined;
@@ -149,22 +152,30 @@ export async function getBrowser(): Promise<Browser> {
 
   const executablePath = resolveExecutablePath();
 
-  sharedBrowser = await puppeteer.launch({
-    executablePath,
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--font-render-hinting=none',
-      '--disable-background-networking',
-      '--disable-default-apps',
-      '--disable-sync',
-      '--disable-extensions',
-    ],
-  });
-
-  return sharedBrowser;
+  try {
+    sharedBrowser = await puppeteer.launch({
+      executablePath,
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--font-render-hinting=none',
+        '--disable-background-networking',
+        '--disable-default-apps',
+        '--disable-sync',
+        '--disable-extensions',
+      ],
+    });
+    return sharedBrowser;
+  } catch (err: any) {
+    throw new Error(
+      `Failed to launch headless browser for PDF/PNG export. ` +
+      `HTML exports remain available without a browser. ` +
+      `To enable PDF/PNG, run "npx puppeteer browsers install chrome" or set PUPPETEER_EXECUTABLE_PATH. ` +
+      `Details: ${err?.message || err}`
+    );
+  }
 }
 
 export async function closeBrowser(): Promise<void> {
