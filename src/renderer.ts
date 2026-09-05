@@ -444,8 +444,13 @@ export async function renderMarkdownToHtml(markdown: string, theme: Theme = 'dar
     }
   }
 
+  // Neutralize hazardous executable elements (<script>, <iframe>, <object>, <embed>, <base>)
+  const sanitizedMarkdown = markdown
+    .replace(/<\s*(script|iframe|object|embed|applet|base)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
+    .replace(/<\s*(script|iframe|object|embed|applet|base)\b[^>]*\/?>/gi, '');
+
   const shikiTheme = theme === 'dark' ? 'github-dark' : 'github-light';
-  const hasMermaid = /(?:^|\n)```mermaid\b/.test(markdown);
+  const hasMermaid = /(?:^|\n)```mermaid\b/.test(sanitizedMarkdown);
 
   const md = new MarkdownIt({
     html: true,
@@ -476,7 +481,7 @@ export async function renderMarkdownToHtml(markdown: string, theme: Theme = 'dar
   md.use(githubAlertsPlugin);
 
   // Normalize local IDE file links ([File](file:///...)) into clean inline code: `File`
-  const normalizedMarkdown = markdown.replace(
+  const normalizedMarkdown = sanitizedMarkdown.replace(
     /\[([^\]]+)\]\((?:file|vscode|cursor|windsurf):\/\/[^\)]+\)/g,
     (_, label) => {
       const clean = label.trim().replace(/^`+|`+$/g, '');
