@@ -212,8 +212,23 @@ export function sanitizeBaseName(rawName: string): string {
 export function assertInsideDir(filePath: string, targetDir: string): void {
   const resolvedTarget = path.resolve(targetDir);
   const resolvedFile = path.resolve(filePath);
-  const relative = path.relative(resolvedTarget, resolvedFile);
-  if (relative.startsWith('..') || path.isAbsolute(relative) || resolvedFile === resolvedTarget) {
+
+  const realTarget = fs.existsSync(resolvedTarget)
+    ? fs.realpathSync(resolvedTarget)
+    : resolvedTarget;
+
+  let realFile = resolvedFile;
+  if (fs.existsSync(resolvedFile)) {
+    realFile = fs.realpathSync(resolvedFile);
+  } else {
+    const parentDir = path.dirname(resolvedFile);
+    if (fs.existsSync(parentDir)) {
+      realFile = path.join(fs.realpathSync(parentDir), path.basename(resolvedFile));
+    }
+  }
+
+  const relative = path.relative(realTarget, realFile);
+  if (relative.startsWith('..') || path.isAbsolute(relative) || realFile === realTarget) {
     throw new Error(`Security Exception: Target path "${filePath}" attempts to escape output directory "${targetDir}".`);
   }
 }

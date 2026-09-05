@@ -155,6 +155,23 @@ describe('Security & Input Validation Tests', () => {
         assertInsideDir(path.resolve('./exports/../secret.txt'), path.resolve('./exports'));
       }, /attempts to escape/);
     });
+
+    it('should throw when a file is a symlink pointing outside the target directory', () => {
+      const symlinkFile = path.resolve('./exports/test-escape-symlink.txt');
+      try {
+        fs.mkdirSync(path.resolve('./exports'), { recursive: true });
+        fs.symlinkSync(path.resolve('./package.json'), symlinkFile);
+        assert.throws(() => {
+          assertInsideDir(symlinkFile, path.resolve('./exports'));
+        }, /attempts to escape/);
+      } finally {
+        try {
+          fs.unlinkSync(symlinkFile);
+        } catch {
+          // ignore
+        }
+      }
+    });
   });
 
   describe('outputDir validation in exportPlan', () => {
