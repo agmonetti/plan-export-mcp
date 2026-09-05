@@ -171,11 +171,40 @@ Options:
   }
 
   const themeIndex = args.indexOf('--theme');
-  const theme = (themeIndex !== -1 && (args[themeIndex + 1] === 'light' ? 'light' : 'dark')) || 'dark';
+  let theme: Theme = 'dark';
+  if (themeIndex !== -1) {
+    const rawTheme = args[themeIndex + 1]?.toLowerCase();
+    if (rawTheme === 'light' || rawTheme === 'dark') {
+      theme = rawTheme;
+    } else {
+      console.error(`Error: Invalid theme "${rawTheme}". Only "dark" or "light" are supported.`);
+      process.exit(1);
+    }
+  }
 
+  const VALID_FORMATS = new Set<string>(['pdf', 'png', 'html']);
   const formatsIndex = args.indexOf('--formats');
   const formatsRaw = formatsIndex !== -1 ? args[formatsIndex + 1] : 'png,pdf';
-  const formats = formatsRaw.split(',').map((s) => s.trim().toLowerCase()) as ExportFormat[];
+  if (!formatsRaw || formatsRaw.startsWith('-')) {
+    console.error('Error: --formats requires a comma-separated list of formats (e.g. png,pdf,html).');
+    process.exit(1);
+  }
+  const parsedFormats = formatsRaw
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter((f) => {
+      if (!VALID_FORMATS.has(f)) {
+        process.stderr.write(`[plan-export-mcp] Warning: Unknown format "${f}" ignored. Valid: pdf, png, html\n`);
+        return false;
+      }
+      return true;
+    }) as ExportFormat[];
+
+  if (parsedFormats.length === 0) {
+    console.error('Error: At least one valid export format must be specified (pdf, png, or html).');
+    process.exit(1);
+  }
+  const formats = parsedFormats;
 
   const dirIndex = args.indexOf('--output-dir');
   const outputDir = dirIndex !== -1 ? args[dirIndex + 1] : './exports';

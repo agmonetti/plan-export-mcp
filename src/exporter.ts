@@ -171,7 +171,14 @@ function releaseExportSlot(): void {
 
 export async function getBrowser(): Promise<Browser> {
   if (sharedBrowser && sharedBrowser.connected) {
-    return sharedBrowser;
+    try {
+      // Proactive health check to ensure browser process is responsive and not crashed
+      await sharedBrowser.version();
+      return sharedBrowser;
+    } catch {
+      // Browser disconnected or crashed; reset reference and re-launch
+      sharedBrowser = null;
+    }
   }
 
   const executablePath = resolveExecutablePath();
@@ -213,16 +220,17 @@ export async function closeBrowser(): Promise<void> {
   }
 }
 
-// Cleanup on exit
-process.on('SIGINT', async () => {
-  await closeBrowser();
-  process.exit(0);
-});
+// Robust cleanup on termination signals
+function handleExitSignal(): void {
+  closeBrowser()
+    .catch(() => {})
+    .finally(() => {
+      process.exit(0);
+    });
+}
 
-process.on('SIGTERM', async () => {
-  await closeBrowser();
-  process.exit(0);
-});
+process.on('SIGINT', handleExitSignal);
+process.on('SIGTERM', handleExitSignal);
 
 export async function exportPlan(options: ExportPlanOptions): Promise<ExportResult[]> {
   await acquireExportSlot();

@@ -481,8 +481,10 @@ export async function renderMarkdownToHtml(markdown: string, theme: Theme = 'dar
       if (rawLang in bundledLanguages) {
         try {
           await highlighter.loadLanguage(rawLang as any);
-        } catch {
-          // fallback gracefully
+        } catch (err) {
+          process.stderr.write(
+            `[plan-export-mcp] Warning: Could not dynamically load grammar for language "${rawLang}": ${err instanceof Error ? err.message : String(err)}\n`
+          );
         }
       }
     }
@@ -572,12 +574,15 @@ export async function renderMarkdownToHtml(markdown: string, theme: Theme = 'dar
   </script>`;
   }
 
+  const scriptSrc = hasMermaid ? "'unsafe-inline' https://cdn.jsdelivr.net" : "'none'";
+  const csp = `default-src 'none'; style-src 'unsafe-inline'; script-src ${scriptSrc}; img-src data: https:; font-src data:;`;
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; img-src data: https:; font-src data:;">
+  <meta http-equiv="Content-Security-Policy" content="${csp}">
   <title>Implementation Plan</title>
   <style>
     ${styles}
