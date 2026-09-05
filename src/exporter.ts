@@ -7,8 +7,6 @@ import type { ExportPlanOptions, ExportResult, Theme, ExportFormat } from './typ
 import { ExportError, SecurityError, BrowserError } from './errors.js';
 import { CONFIG } from './config.js';
 
-let sharedBrowser: Browser | null = null;
-
 export function expandHome(filePath: string): string {
   if (filePath === '~' || filePath.startsWith('~/')) {
     return path.join(os.homedir(), filePath.slice(1));
@@ -247,60 +245,6 @@ export function resolveExecutablePath(): string | undefined {
   return undefined;
 }
 
-// Concurrency control: limit simultaneous browser export tasks to prevent RAM exhaustion
-let activeExports = 0;
-const waitQueue: Array<() => void> = [];
-let browserIdleTimer: NodeJS.Timeout | null = null;
-
-export function resetBrowserIdleTimer(): void {
-  if (browserIdleTimer) {
-    clearTimeout(browserIdleTimer);
-    browserIdleTimer = null;
-  }
-  if (sharedBrowser && activeExports === 0) {
-    browserIdleTimer = setTimeout(() => {
-      if (activeExports === 0 && sharedBrowser) {
-        closeBrowser().catch(() => {});
-      }
-    }, CONFIG.timeouts.browserIdleMs);
-    if (browserIdleTimer && typeof browserIdleTimer.unref === 'function') {
-      browserIdleTimer.unref();
-    }
-  }
-}
-
-async function acquireExportSlot(): Promise<void> {
-  if (browserIdleTimer) {
-    clearTimeout(browserIdleTimer);
-    browserIdleTimer = null;
-  }
-  if (activeExports < CONFIG.limits.maxConcurrentExports) {
-    activeExports++;
-    return;
-  }
-  if (waitQueue.length >= CONFIG.limits.maxQueueSize) {
-    throw new ExportError(
-      `Export capacity exceeded: Concurrency queue is full (max ${CONFIG.limits.maxQueueSize} pending requests). Please retry shortly.`,
-      'CAPACITY_EXCEEDED'
-    );
-  }
-  return new Promise<void>((resolve) => {
-    waitQueue.push(() => {
-      activeExports++;
-      resolve();
-    });
-  });
-}
-
-function releaseExportSlot(): void {
-  activeExports--;
-  if (waitQueue.length > 0 && activeExports < CONFIG.limits.maxConcurrentExports) {
-    const next = waitQueue.shift();
-    if (next) next();
-  } else if (activeExports === 0) {
-    resetBrowserIdleTimer();
-  }
-}
 
 const BASE_BROWSER_ARGS: string[] = [
   '--disable-dev-shm-usage',
@@ -348,70 +292,6 @@ export async function launchChromiumWithFallback(executablePath?: string): Promi
   });
 }
 
-export async function getBrowser(): Promise<Browser> {
-  if (sharedBrowser && sharedBrowser.connected) {
-    try {
-      // Proactive health check to ensure browser process is responsive and not crashed
-      await sharedBrowser.version();
-      return sharedBrowser;
-    } catch {
-      // Browser disconnected or crashed; reset reference and re-launch
-      sharedBrowser = null;
-    }
-  }
-
-  const executablePath = resolveExecutablePath();
-
-  try {
-    const launchPromise = launchChromiumWithFallback(executablePath);
-
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      const t = setTimeout(() => {
-        reject(new Error(`Timed out after ${CONFIG.timeouts.browserLaunchMs / 1000}s attempting to launch headless browser.`));
-      }, CONFIG.timeouts.browserLaunchMs);
-      if (typeof t.unref === 'function') t.unref();
-    });
-
-    sharedBrowser = await Promise.race([launchPromise, timeoutPromise]);
-    resetBrowserIdleTimer();
-    return sharedBrowser;
-  } catch (err: any) {
-    throw new BrowserError(
-      `Failed to launch headless browser for PDF/PNG export. ` +
-      `HTML exports remain available without a browser. ` +
-      `To enable PDF/PNG, run "npx puppeteer browsers install chrome" or set PUPPETEER_EXECUTABLE_PATH. ` +
-      `Details: ${err?.message || err}`
-    );
-  }
-}
-
-export async function closeBrowser(): Promise<void> {
-  if (browserIdleTimer) {
-    clearTimeout(browserIdleTimer);
-    browserIdleTimer = null;
-  }
-  if (sharedBrowser) {
-    try {
-      await sharedBrowser.close();
-    } catch {
-      // ignore
-    }
-    sharedBrowser = null;
-  }
-}
-
-// Robust cleanup on termination signals
-function handleExitSignal(): void {
-  closeBrowser()
-    .catch(() => {})
-    .finally(() => {
-      process.exit(0);
-    });
-}
-
-process.on('SIGINT', handleExitSignal);
-process.on('SIGTERM', handleExitSignal);
-
 export function isAllowedBrowserUrl(urlStr: string): boolean {
   if (urlStr.startsWith('data:') || urlStr.startsWith('blob:') || urlStr === 'about:blank') {
     return true;
@@ -437,155 +317,317 @@ export function isAllowedBrowserUrl(urlStr: string): boolean {
   }
 }
 
-export async function exportPlan(options: ExportPlanOptions): Promise<ExportResult[]> {
-  await acquireExportSlot();
-  try {
-    const {
-      input,
-      theme = CONFIG.defaults.theme,
-      formats = [...CONFIG.defaults.formats],
-      outputDir = CONFIG.defaults.outputDir,
-      outputName,
-    } = options;
+export class ExportService {
+  private sharedBrowser: Browser | null = null;
+  private activeExports = 0;
+  private waitQueue: Array<() => void> = [];
+  private browserIdleTimer: NodeJS.Timeout | null = null;
+  private config: typeof CONFIG;
 
-    const { content: markdownContent, derivedName } = resolveSafeMarkdownInput(input);
-    const safeBaseName = sanitizeBaseName(outputName || derivedName || `plan-${Date.now()}`);
+  constructor(config: typeof CONFIG = CONFIG) {
+    this.config = config;
+  }
 
-    // Validate outputDir: allow relative and safe absolute paths, block system and credential paths
-    const trimmedOutputDir = outputDir.trim();
-    if (trimmedOutputDir.includes('\0')) {
-      throw new SecurityError('Security Exception: Null bytes are not permitted in output directory.', 'NULL_BYTE');
+  public getActiveExports(): number {
+    return this.activeExports;
+  }
+
+  public getQueueLength(): number {
+    return this.waitQueue.length;
+  }
+
+  public hasActiveBrowser(): boolean {
+    return this.sharedBrowser !== null && this.sharedBrowser.connected;
+  }
+
+  public resetBrowserIdleTimer(): void {
+    if (this.browserIdleTimer) {
+      clearTimeout(this.browserIdleTimer);
+      this.browserIdleTimer = null;
     }
-    const cwd = path.resolve(process.cwd());
-    const expandedOut = expandHome(trimmedOutputDir);
-    const resolvedOutputDir = path.isAbsolute(expandedOut)
-      ? path.normalize(expandedOut)
-      : path.resolve(cwd, expandedOut);
-
-    if (isSystemOrRestrictedPath(resolvedOutputDir)) {
-      throw new SecurityError(
-        `Security Exception: Access denied. Target output directory "${trimmedOutputDir}" is a restricted system or credential path.`,
-        'RESTRICTED_PATH'
-      );
+    if (this.sharedBrowser && this.activeExports === 0) {
+      this.browserIdleTimer = setTimeout(() => {
+        if (this.activeExports === 0 && this.sharedBrowser) {
+          this.closeBrowser().catch(() => {});
+        }
+      }, this.config.timeouts.browserIdleMs);
+      if (this.browserIdleTimer && typeof this.browserIdleTimer.unref === 'function') {
+        this.browserIdleTimer.unref();
+      }
     }
+  }
 
-    if (!fs.existsSync(resolvedOutputDir)) {
-      fs.mkdirSync(resolvedOutputDir, { recursive: true });
+  public async acquireExportSlot(): Promise<void> {
+    if (this.browserIdleTimer) {
+      clearTimeout(this.browserIdleTimer);
+      this.browserIdleTimer = null;
     }
-
-    const realOutputDir = fs.realpathSync(resolvedOutputDir);
-    if (isSystemOrRestrictedPath(realOutputDir)) {
-      throw new SecurityError(
-        `Security Exception: Access denied. Target output directory resolves to a restricted system path.`,
-        'RESTRICTED_PATH'
-      );
+    if (this.activeExports < this.config.limits.maxConcurrentExports) {
+      this.activeExports++;
+      return;
     }
-
-    const dirStat = fs.statSync(realOutputDir);
-    if (!dirStat.isDirectory()) {
+    if (this.waitQueue.length >= this.config.limits.maxQueueSize) {
       throw new ExportError(
-        `Invalid output directory: Target path is not a directory: "${trimmedOutputDir}".`,
-        'NOT_A_DIRECTORY'
+        `Export capacity exceeded: Concurrency queue is full (max ${this.config.limits.maxQueueSize} pending requests). Please retry shortly.`,
+        'CAPACITY_EXCEEDED'
       );
     }
+    return new Promise<void>((resolve) => {
+      this.waitQueue.push(() => {
+        this.activeExports++;
+        resolve();
+      });
+    });
+  }
 
-    const results: ExportResult[] = [];
+  public releaseExportSlot(): void {
+    this.activeExports--;
+    if (this.waitQueue.length > 0 && this.activeExports < this.config.limits.maxConcurrentExports) {
+      const next = this.waitQueue.shift();
+      if (next) next();
+    } else if (this.activeExports === 0) {
+      this.resetBrowserIdleTimer();
+    }
+  }
 
-    // Format: HTML (Standalone lightweight output with CDN Mermaid if present)
-    if (formats.includes('html')) {
-      const standaloneHtml = await renderMarkdownToHtml(markdownContent, theme, { standaloneHtml: true });
-      const htmlPath = path.join(realOutputDir, `${safeBaseName}.html`);
-      assertInsideDir(htmlPath, realOutputDir);
-      fs.writeFileSync(htmlPath, standaloneHtml, 'utf-8');
-      results.push({ format: 'html', path: htmlPath });
+  public async getBrowser(): Promise<Browser> {
+    if (this.sharedBrowser && this.sharedBrowser.connected) {
+      try {
+        // Proactive health check to ensure browser process is responsive and not crashed
+        await this.sharedBrowser.version();
+        return this.sharedBrowser;
+      } catch {
+        // Browser disconnected or crashed; reset reference and re-launch
+        this.sharedBrowser = null;
+      }
     }
 
-    const needsBrowser = formats.includes('png') || formats.includes('pdf');
-    if (!needsBrowser) {
-      return results;
-    }
-
-    // Render HTML for headless browser (using local offline bundle for Mermaid)
-    const browserHtml = await renderMarkdownToHtml(markdownContent, theme, { standaloneHtml: false });
-    const browser = await getBrowser();
-    const page = await browser.newPage();
+    const executablePath = resolveExecutablePath();
 
     try {
-      // Network isolation & strict allowlist anti-SSRF request interception
-      await page.setRequestInterception(true);
-      page.on('request', (req) => {
-        if (isAllowedBrowserUrl(req.url())) {
-          req.continue();
-        } else {
-          req.abort('blockedbyclient');
-        }
+      const launchPromise = launchChromiumWithFallback(executablePath);
+
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        const t = setTimeout(() => {
+          reject(
+            new Error(
+              `Timed out after ${this.config.timeouts.browserLaunchMs / 1000}s attempting to launch headless browser.`
+            )
+          );
+        }, this.config.timeouts.browserLaunchMs);
+        if (typeof t.unref === 'function') t.unref();
       });
 
-      // Defensive default timeout for all page operations
-      page.setDefaultTimeout(CONFIG.timeouts.operationMs);
-
-      // Attack surface reduction: disable JavaScript entirely when Mermaid diagrams are not present
-      const hasMermaid = browserHtml.includes('class="mermaid');
-      if (!hasMermaid) {
-        await page.setJavaScriptEnabled(false);
-      }
-
-      // 2x Retina DPR for crisp, high-density display
-      await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 2 });
-      await page.setContent(browserHtml, { waitUntil: 'load', timeout: CONFIG.timeouts.operationMs });
-
-      // Wait for Mermaid diagrams if present
-      if (hasMermaid) {
-        await page
-          .waitForFunction(
-            () => {
-              const diagrams = document.querySelectorAll('.mermaid');
-              if (diagrams.length === 0) return true;
-              return Array.from(diagrams).every((d) => d.querySelector('svg'));
-            },
-            { timeout: CONFIG.timeouts.mermaidMs }
-          )
-          .catch(() => {
-            // Fallback: proceed if mermaid takes too long or isn't present
-          });
-      }
-
-      // Format: PNG
-      if (formats.includes('png')) {
-        const pngPath = path.join(realOutputDir, `${safeBaseName}.png`);
-        assertInsideDir(pngPath, realOutputDir);
-        await page.screenshot({
-          path: pngPath,
-          fullPage: true,
-          type: 'png',
-        });
-        results.push({ format: 'png', path: pngPath });
-      }
-
-      // Format: PDF
-      if (formats.includes('pdf')) {
-        const pdfPath = path.join(realOutputDir, `${safeBaseName}.pdf`);
-        assertInsideDir(pdfPath, realOutputDir);
-        await page.emulateMediaType('print');
-        await page.pdf({
-          path: pdfPath,
-          format: 'A4',
-          printBackground: true,
-          margin: {
-            top: '0',
-            bottom: '0',
-            left: '0',
-            right: '0',
-          },
-        });
-        results.push({ format: 'pdf', path: pdfPath });
-      }
-    } finally {
-      await page.close();
+      this.sharedBrowser = await Promise.race([launchPromise, timeoutPromise]);
+      this.resetBrowserIdleTimer();
+      return this.sharedBrowser;
+    } catch (err: any) {
+      throw new BrowserError(
+        `Failed to launch headless browser for PDF/PNG export. ` +
+        `HTML exports remain available without a browser. ` +
+        `To enable PDF/PNG, run "npx puppeteer browsers install chrome" or set PUPPETEER_EXECUTABLE_PATH. ` +
+        `Details: ${err?.message || err}`
+      );
     }
+  }
 
-    return results;
-  } finally {
-    releaseExportSlot();
+  public async closeBrowser(): Promise<void> {
+    if (this.browserIdleTimer) {
+      clearTimeout(this.browserIdleTimer);
+      this.browserIdleTimer = null;
+    }
+    if (this.sharedBrowser) {
+      try {
+        await this.sharedBrowser.close();
+      } catch {
+        // ignore
+      }
+      this.sharedBrowser = null;
+    }
+  }
+
+  public async exportPlan(options: ExportPlanOptions): Promise<ExportResult[]> {
+    await this.acquireExportSlot();
+    try {
+      const {
+        input,
+        theme = this.config.defaults.theme,
+        formats = [...this.config.defaults.formats],
+        outputDir = this.config.defaults.outputDir,
+        outputName,
+      } = options;
+
+      const { content: markdownContent, derivedName } = resolveSafeMarkdownInput(input);
+      const safeBaseName = sanitizeBaseName(outputName || derivedName || `plan-${Date.now()}`);
+
+      // Validate outputDir: allow relative and safe absolute paths, block system and credential paths
+      const trimmedOutputDir = outputDir.trim();
+      if (trimmedOutputDir.includes('\0')) {
+        throw new SecurityError('Security Exception: Null bytes are not permitted in output directory.', 'NULL_BYTE');
+      }
+      const cwd = path.resolve(process.cwd());
+      const expandedOut = expandHome(trimmedOutputDir);
+      const resolvedOutputDir = path.isAbsolute(expandedOut)
+        ? path.normalize(expandedOut)
+        : path.resolve(cwd, expandedOut);
+
+      if (isSystemOrRestrictedPath(resolvedOutputDir)) {
+        throw new SecurityError(
+          `Security Exception: Access denied. Target output directory "${trimmedOutputDir}" is a restricted system or credential path.`,
+          'RESTRICTED_PATH'
+        );
+      }
+
+      if (!fs.existsSync(resolvedOutputDir)) {
+        fs.mkdirSync(resolvedOutputDir, { recursive: true });
+      }
+
+      const realOutputDir = fs.realpathSync(resolvedOutputDir);
+      if (isSystemOrRestrictedPath(realOutputDir)) {
+        throw new SecurityError(
+          `Security Exception: Access denied. Target output directory resolves to a restricted system path.`,
+          'RESTRICTED_PATH'
+        );
+      }
+
+      const dirStat = fs.statSync(realOutputDir);
+      if (!dirStat.isDirectory()) {
+        throw new ExportError(
+          `Invalid output directory: Target path is not a directory: "${trimmedOutputDir}".`,
+          'NOT_A_DIRECTORY'
+        );
+      }
+
+      const results: ExportResult[] = [];
+
+      // Format: HTML (Standalone lightweight output with CDN Mermaid if present)
+      if (formats.includes('html')) {
+        const standaloneHtml = await renderMarkdownToHtml(markdownContent, theme, { standaloneHtml: true });
+        const htmlPath = path.join(realOutputDir, `${safeBaseName}.html`);
+        assertInsideDir(htmlPath, realOutputDir);
+        fs.writeFileSync(htmlPath, standaloneHtml, 'utf-8');
+        results.push({ format: 'html', path: htmlPath });
+      }
+
+      const needsBrowser = formats.includes('png') || formats.includes('pdf');
+      if (!needsBrowser) {
+        return results;
+      }
+
+      // Render HTML for headless browser (using local offline bundle for Mermaid)
+      const browserHtml = await renderMarkdownToHtml(markdownContent, theme, { standaloneHtml: false });
+      const browser = await this.getBrowser();
+      const page = await browser.newPage();
+
+      try {
+        // Network isolation & strict allowlist anti-SSRF request interception
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+          if (isAllowedBrowserUrl(req.url())) {
+            req.continue();
+          } else {
+            req.abort('blockedbyclient');
+          }
+        });
+
+        // Defensive default timeout for all page operations
+        page.setDefaultTimeout(this.config.timeouts.operationMs);
+
+        // Attack surface reduction: disable JavaScript entirely when Mermaid diagrams are not present
+        const hasMermaid = browserHtml.includes('class="mermaid');
+        if (!hasMermaid) {
+          await page.setJavaScriptEnabled(false);
+        }
+
+        // 2x Retina DPR for crisp, high-density display
+        await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 2 });
+        await page.setContent(browserHtml, { waitUntil: 'load', timeout: this.config.timeouts.operationMs });
+
+        // Wait for Mermaid diagrams if present
+        if (hasMermaid) {
+          await page
+            .waitForFunction(
+              () => {
+                const diagrams = document.querySelectorAll('.mermaid');
+                if (diagrams.length === 0) return true;
+                return Array.from(diagrams).every((d) => d.querySelector('svg'));
+              },
+              { timeout: this.config.timeouts.mermaidMs }
+            )
+            .catch(() => {
+              // Fallback: proceed if mermaid takes too long or isn't present
+            });
+        }
+
+        // Format: PNG
+        if (formats.includes('png')) {
+          const pngPath = path.join(realOutputDir, `${safeBaseName}.png`);
+          assertInsideDir(pngPath, realOutputDir);
+          await page.screenshot({
+            path: pngPath,
+            fullPage: true,
+            type: 'png',
+          });
+          results.push({ format: 'png', path: pngPath });
+        }
+
+        // Format: PDF
+        if (formats.includes('pdf')) {
+          const pdfPath = path.join(realOutputDir, `${safeBaseName}.pdf`);
+          assertInsideDir(pdfPath, realOutputDir);
+          await page.emulateMediaType('print');
+          await page.pdf({
+            path: pdfPath,
+            format: 'A4',
+            printBackground: true,
+            margin: {
+              top: '0',
+              bottom: '0',
+              left: '0',
+              right: '0',
+            },
+          });
+          results.push({ format: 'pdf', path: pdfPath });
+        }
+      } finally {
+        await page.close();
+      }
+
+      return results;
+    } finally {
+      this.releaseExportSlot();
+    }
   }
 }
+
+export const defaultExportService = new ExportService();
+
+export async function exportPlan(options: ExportPlanOptions): Promise<ExportResult[]> {
+  return defaultExportService.exportPlan(options);
+}
+
+export async function getBrowser(): Promise<Browser> {
+  return defaultExportService.getBrowser();
+}
+
+export async function closeBrowser(): Promise<void> {
+  return defaultExportService.closeBrowser();
+}
+
+export function resetBrowserIdleTimer(): void {
+  defaultExportService.resetBrowserIdleTimer();
+}
+
+// Robust cleanup on termination signals
+function handleExitSignal(): void {
+  defaultExportService
+    .closeBrowser()
+    .catch(() => {})
+    .finally(() => {
+      process.exit(0);
+    });
+}
+
+process.on('SIGINT', handleExitSignal);
+process.on('SIGTERM', handleExitSignal);
+

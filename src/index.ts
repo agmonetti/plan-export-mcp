@@ -15,6 +15,7 @@ import { parseArgs } from 'node:util';
 import { exportPlan, closeBrowser } from './exporter.js';
 import type { ExportPlanOptions, ExportFormat, Theme } from './types.js';
 import { z } from 'zod';
+export { ExportService, defaultExportService, exportPlan, closeBrowser, getBrowser } from './exporter.js';
 export { ExportError, SecurityError, BrowserError } from './errors.js';
 export { CONFIG } from './config.js';
 
