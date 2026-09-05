@@ -227,6 +227,19 @@ describe('Security & Input Validation Tests', () => {
       assert.equal(results[0].format, 'html');
       assert.ok(results[0].path.endsWith('test-safe-output.html'));
     });
+
+    it('should reject output directory paths that point to a regular file instead of a directory', async () => {
+      await assert.rejects(
+        async () => {
+          await exportPlan({
+            input: '# Test',
+            outputDir: 'package.json',
+            formats: ['html'],
+          });
+        },
+        /Target path is not a directory/
+      );
+    });
   });
 
   describe('sanitizeErrorMessage', () => {

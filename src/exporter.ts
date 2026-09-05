@@ -486,15 +486,22 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
       );
     }
 
-    if (fs.existsSync(resolvedOutputDir)) {
-      const realOutputDir = fs.realpathSync(resolvedOutputDir);
-      if (isSystemOrRestrictedPath(realOutputDir)) {
-        throw new Error(
-          `Security Exception: Access denied. Target output directory resolves to a restricted system path.`
-        );
-      }
-    } else {
+    if (!fs.existsSync(resolvedOutputDir)) {
       fs.mkdirSync(resolvedOutputDir, { recursive: true });
+    }
+
+    const realOutputDir = fs.realpathSync(resolvedOutputDir);
+    if (isSystemOrRestrictedPath(realOutputDir)) {
+      throw new Error(
+        `Security Exception: Access denied. Target output directory resolves to a restricted system path.`
+      );
+    }
+
+    const dirStat = fs.statSync(realOutputDir);
+    if (!dirStat.isDirectory()) {
+      throw new Error(
+        `Invalid output directory: Target path is not a directory: "${trimmedOutputDir}".`
+      );
     }
 
     const results: ExportResult[] = [];
@@ -502,8 +509,8 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
     // Format: HTML (Standalone lightweight output with CDN Mermaid if present)
     if (formats.includes('html')) {
       const standaloneHtml = await renderMarkdownToHtml(markdownContent, theme, { standaloneHtml: true });
-      const htmlPath = path.join(resolvedOutputDir, `${safeBaseName}.html`);
-      assertInsideDir(htmlPath, resolvedOutputDir);
+      const htmlPath = path.join(realOutputDir, `${safeBaseName}.html`);
+      assertInsideDir(htmlPath, realOutputDir);
       fs.writeFileSync(htmlPath, standaloneHtml, 'utf-8');
       results.push({ format: 'html', path: htmlPath });
     }
@@ -560,8 +567,8 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
 
       // Format: PNG
       if (formats.includes('png')) {
-        const pngPath = path.join(resolvedOutputDir, `${safeBaseName}.png`);
-        assertInsideDir(pngPath, resolvedOutputDir);
+        const pngPath = path.join(realOutputDir, `${safeBaseName}.png`);
+        assertInsideDir(pngPath, realOutputDir);
         await page.screenshot({
           path: pngPath,
           fullPage: true,
@@ -572,8 +579,8 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
 
       // Format: PDF
       if (formats.includes('pdf')) {
-        const pdfPath = path.join(resolvedOutputDir, `${safeBaseName}.pdf`);
-        assertInsideDir(pdfPath, resolvedOutputDir);
+        const pdfPath = path.join(realOutputDir, `${safeBaseName}.pdf`);
+        assertInsideDir(pdfPath, realOutputDir);
         await page.emulateMediaType('print');
         await page.pdf({
           path: pdfPath,
