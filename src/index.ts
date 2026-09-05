@@ -10,6 +10,20 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { exportPlan, closeBrowser } from './exporter.js';
 import type { ExportPlanOptions, ExportFormat, Theme } from './types.js';
+import { z } from 'zod';
+
+const ExportPlanSchema = z.object({
+  input: z
+    .string({ message: 'The "input" parameter is required and must be a string.' })
+    .min(1, 'The "input" parameter cannot be empty.'),
+  theme: z.enum(['dark', 'light']).default('dark'),
+  formats: z
+    .array(z.enum(['pdf', 'png', 'html']))
+    .min(1, 'At least one export format must be specified.')
+    .default(['png', 'pdf']),
+  outputDir: z.string().default('./exports'),
+  outputName: z.string().optional(),
+});
 
 export async function runMcpServer() {
   const server = new Server(
@@ -74,17 +88,13 @@ export async function runMcpServer() {
       throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`);
     }
 
-    const args = (request.params.arguments || {}) as Record<string, any>;
-    const input = args.input as string;
-
-    if (!input) {
-      throw new McpError(ErrorCode.InvalidParams, 'The "input" parameter is required.');
+    const parseResult = ExportPlanSchema.safeParse(request.params.arguments || {});
+    if (!parseResult.success) {
+      const errorMsg = parseResult.error.issues.map((i) => i.message).join('; ');
+      throw new McpError(ErrorCode.InvalidParams, `Invalid parameters: ${errorMsg}`);
     }
 
-    const theme = (args.theme as Theme) || 'dark';
-    const formats = (args.formats as ExportFormat[]) || ['png', 'pdf'];
-    const outputDir = (args.outputDir as string) || './exports';
-    const outputName = args.outputName as string | undefined;
+    const { input, theme, formats, outputDir, outputName } = parseResult.data;
 
     try {
       const results = await exportPlan({

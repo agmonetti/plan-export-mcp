@@ -116,6 +116,32 @@ export function resolveExecutablePath(): string | undefined {
 const OPERATION_TIMEOUT_MS = 15000;
 const MERMAID_TIMEOUT_MS = 6000;
 
+// Concurrency control: limit simultaneous browser export tasks to prevent RAM exhaustion
+const MAX_CONCURRENT_EXPORTS = 2;
+let activeExports = 0;
+const waitQueue: Array<() => void> = [];
+
+async function acquireExportSlot(): Promise<void> {
+  if (activeExports < MAX_CONCURRENT_EXPORTS) {
+    activeExports++;
+    return;
+  }
+  return new Promise<void>((resolve) => {
+    waitQueue.push(() => {
+      activeExports++;
+      resolve();
+    });
+  });
+}
+
+function releaseExportSlot(): void {
+  activeExports--;
+  if (waitQueue.length > 0 && activeExports < MAX_CONCURRENT_EXPORTS) {
+    const next = waitQueue.shift();
+    if (next) next();
+  }
+}
+
 export async function getBrowser(): Promise<Browser> {
   if (sharedBrowser && sharedBrowser.connected) {
     return sharedBrowser;
@@ -164,143 +190,148 @@ process.on('SIGTERM', async () => {
 });
 
 export async function exportPlan(options: ExportPlanOptions): Promise<ExportResult[]> {
-  const {
-    input,
-    theme = 'dark',
-    formats = ['png', 'pdf'],
-    outputDir = './exports',
-    outputName,
-  } = options;
-
-  const { content: markdownContent, derivedName } = resolveSafeMarkdownInput(input);
-  const safeBaseName = sanitizeBaseName(outputName || derivedName || `plan-${Date.now()}`);
-
-  // Ensure output directory exists
-  const resolvedOutputDir = path.resolve(process.cwd(), outputDir);
-  if (!fs.existsSync(resolvedOutputDir)) {
-    fs.mkdirSync(resolvedOutputDir, { recursive: true });
-  }
-
-  // Render markdown to fully styled HTML
-  const fullHtml = await renderMarkdownToHtml(markdownContent, theme);
-  const results: ExportResult[] = [];
-
-  // Format: HTML
-  if (formats.includes('html')) {
-    const htmlPath = path.join(resolvedOutputDir, `${safeBaseName}.html`);
-    assertInsideDir(htmlPath, resolvedOutputDir);
-    fs.writeFileSync(htmlPath, fullHtml, 'utf-8');
-    results.push({ format: 'html', path: htmlPath });
-  }
-
-  const needsBrowser = formats.includes('png') || formats.includes('pdf');
-  if (!needsBrowser) {
-    return results;
-  }
-
-  const browser = await getBrowser();
-  const page = await browser.newPage();
-
+  await acquireExportSlot();
   try {
-    // Network isolation & anti-SSRF request interception
-    await page.setRequestInterception(true);
-    page.on('request', (req) => {
-      const urlStr = req.url();
+    const {
+      input,
+      theme = 'dark',
+      formats = ['png', 'pdf'],
+      outputDir = './exports',
+      outputName,
+    } = options;
 
-      // Allow safe internal data/blob protocols and initial document
-      if (urlStr.startsWith('data:') || urlStr.startsWith('blob:') || urlStr === 'about:blank') {
-        req.continue();
-        return;
-      }
+    const { content: markdownContent, derivedName } = resolveSafeMarkdownInput(input);
+    const safeBaseName = sanitizeBaseName(outputName || derivedName || `plan-${Date.now()}`);
 
-      // Allow official Mermaid CDN only if needed
-      if (urlStr.startsWith('https://cdn.jsdelivr.net/npm/mermaid@')) {
-        req.continue();
-        return;
-      }
+    // Ensure output directory exists
+    const resolvedOutputDir = path.resolve(process.cwd(), outputDir);
+    if (!fs.existsSync(resolvedOutputDir)) {
+      fs.mkdirSync(resolvedOutputDir, { recursive: true });
+    }
 
-      // Block local filesystem access and private IP ranges (SSRF)
-      try {
-        const parsed = new URL(urlStr);
-        const hostname = parsed.hostname.toLowerCase();
+    // Render markdown to fully styled HTML
+    const fullHtml = await renderMarkdownToHtml(markdownContent, theme);
+    const results: ExportResult[] = [];
 
-        const isPrivateOrLoopback =
-          parsed.protocol === 'file:' ||
-          hostname === 'localhost' ||
-          hostname === '127.0.0.1' ||
-          hostname === '0.0.0.0' ||
-          hostname === '169.254.169.254' ||
-          /^10\./.test(hostname) ||
-          /^192\.168\./.test(hostname) ||
-          /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname);
+    // Format: HTML
+    if (formats.includes('html')) {
+      const htmlPath = path.join(resolvedOutputDir, `${safeBaseName}.html`);
+      assertInsideDir(htmlPath, resolvedOutputDir);
+      fs.writeFileSync(htmlPath, fullHtml, 'utf-8');
+      results.push({ format: 'html', path: htmlPath });
+    }
 
-        if (isPrivateOrLoopback) {
+    const needsBrowser = formats.includes('png') || formats.includes('pdf');
+    if (!needsBrowser) {
+      return results;
+    }
+
+    const browser = await getBrowser();
+    const page = await browser.newPage();
+
+    try {
+      // Network isolation & anti-SSRF request interception
+      await page.setRequestInterception(true);
+      page.on('request', (req) => {
+        const urlStr = req.url();
+
+        // Allow safe internal data/blob protocols and initial document
+        if (urlStr.startsWith('data:') || urlStr.startsWith('blob:') || urlStr === 'about:blank') {
+          req.continue();
+          return;
+        }
+
+        // Allow official Mermaid CDN only if needed
+        if (urlStr.startsWith('https://cdn.jsdelivr.net/npm/mermaid@')) {
+          req.continue();
+          return;
+        }
+
+        // Block local filesystem access and private IP ranges (SSRF)
+        try {
+          const parsed = new URL(urlStr);
+          const hostname = parsed.hostname.toLowerCase();
+
+          const isPrivateOrLoopback =
+            parsed.protocol === 'file:' ||
+            hostname === 'localhost' ||
+            hostname === '127.0.0.1' ||
+            hostname === '0.0.0.0' ||
+            hostname === '169.254.169.254' ||
+            /^10\./.test(hostname) ||
+            /^192\.168\./.test(hostname) ||
+            /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname);
+
+          if (isPrivateOrLoopback) {
+            req.abort('accessdenied');
+            return;
+          }
+        } catch {
           req.abort('accessdenied');
           return;
         }
-      } catch {
-        req.abort('accessdenied');
-        return;
+
+        // Block all other unauthorized external requests
+        req.abort('blockedbyclient');
+      });
+
+      // Defensive default timeout for all page operations
+      page.setDefaultTimeout(OPERATION_TIMEOUT_MS);
+
+      // 2x Retina DPR for crisp, high-density display
+      await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 2 });
+      await page.setContent(fullHtml, { waitUntil: 'load', timeout: OPERATION_TIMEOUT_MS });
+
+      // Wait for Mermaid diagrams if present
+      await page
+        .waitForFunction(
+          () => {
+            const diagrams = document.querySelectorAll('.mermaid');
+            if (diagrams.length === 0) return true;
+            return Array.from(diagrams).every((d) => d.querySelector('svg'));
+          },
+          { timeout: MERMAID_TIMEOUT_MS }
+        )
+        .catch(() => {
+          // Fallback: proceed if mermaid takes too long or isn't present
+        });
+
+      // Format: PNG
+      if (formats.includes('png')) {
+        const pngPath = path.join(resolvedOutputDir, `${safeBaseName}.png`);
+        assertInsideDir(pngPath, resolvedOutputDir);
+        await page.screenshot({
+          path: pngPath,
+          fullPage: true,
+          type: 'png',
+        });
+        results.push({ format: 'png', path: pngPath });
       }
 
-      // Block all other unauthorized external requests
-      req.abort('blockedbyclient');
-    });
-
-    // Defensive default timeout for all page operations
-    page.setDefaultTimeout(OPERATION_TIMEOUT_MS);
-
-    // 2x Retina DPR for crisp, high-density display
-    await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 2 });
-    await page.setContent(fullHtml, { waitUntil: 'load', timeout: OPERATION_TIMEOUT_MS });
-
-    // Wait for Mermaid diagrams if present
-    await page
-      .waitForFunction(
-        () => {
-          const diagrams = document.querySelectorAll('.mermaid');
-          if (diagrams.length === 0) return true;
-          return Array.from(diagrams).every((d) => d.querySelector('svg'));
-        },
-        { timeout: MERMAID_TIMEOUT_MS }
-      )
-      .catch(() => {
-        // Fallback: proceed if mermaid takes too long or isn't present
-      });
-
-    // Format: PNG
-    if (formats.includes('png')) {
-      const pngPath = path.join(resolvedOutputDir, `${safeBaseName}.png`);
-      assertInsideDir(pngPath, resolvedOutputDir);
-      await page.screenshot({
-        path: pngPath,
-        fullPage: true,
-        type: 'png',
-      });
-      results.push({ format: 'png', path: pngPath });
+      // Format: PDF
+      if (formats.includes('pdf')) {
+        const pdfPath = path.join(resolvedOutputDir, `${safeBaseName}.pdf`);
+        assertInsideDir(pdfPath, resolvedOutputDir);
+        await page.emulateMediaType('print');
+        await page.pdf({
+          path: pdfPath,
+          format: 'A4',
+          printBackground: true,
+          margin: {
+            top: '0',
+            bottom: '0',
+            left: '0',
+            right: '0',
+          },
+        });
+        results.push({ format: 'pdf', path: pdfPath });
+      }
+    } finally {
+      await page.close();
     }
 
-    // Format: PDF
-    if (formats.includes('pdf')) {
-      const pdfPath = path.join(resolvedOutputDir, `${safeBaseName}.pdf`);
-      assertInsideDir(pdfPath, resolvedOutputDir);
-      await page.emulateMediaType('print');
-      await page.pdf({
-        path: pdfPath,
-        format: 'A4',
-        printBackground: true,
-        margin: {
-          top: '0',
-          bottom: '0',
-          left: '0',
-          right: '0',
-        },
-      });
-      results.push({ format: 'pdf', path: pdfPath });
-    }
+    return results;
   } finally {
-    await page.close();
+    releaseExportSlot();
   }
-
-  return results;
 }

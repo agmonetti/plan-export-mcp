@@ -36,7 +36,8 @@
     "markdown-it-task-lists": "^2.1.1",
     "mermaid": "^11.17.2",
     "puppeteer": "^24.4.0",
-    "shiki": "^4.4.3"
+    "shiki": "^4.4.3",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@types/markdown-it": "^14.1.2",
