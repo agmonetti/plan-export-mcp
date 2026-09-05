@@ -6,6 +6,7 @@ import { renderMarkdownToHtml } from './renderer.js';
 import type { ExportPlanOptions, ExportResult, Theme, ExportFormat } from './types.js';
 import { ExportError, SecurityError, BrowserError } from './errors.js';
 import { CONFIG } from './config.js';
+import { gracefulExit } from './shutdown.js';
 
 export function expandHome(filePath: string): string {
   if (filePath === '~' || filePath.startsWith('~/')) {
@@ -624,7 +625,7 @@ function handleExitSignal(): void {
     .closeBrowser()
     .catch(() => {})
     .finally(() => {
-      process.exit(0);
+      gracefulExit(0);
     });
 }
 

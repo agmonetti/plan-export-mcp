@@ -87,4 +87,19 @@ describe('ExportService Unit Tests', () => {
     assert.equal(typeof defaultExportService.getBrowser, 'function');
     assert.equal(typeof defaultExportService.closeBrowser, 'function');
   });
+
+  it('should register and clean up shutdown handlers cleanly', async () => {
+    const { setupShutdownHandlers } = await import('../src/index.js');
+    const initialSigintCount = process.listenerCount('SIGINT');
+    const initialSigtermCount = process.listenerCount('SIGTERM');
+
+    const cleanup = setupShutdownHandlers();
+    assert.equal(process.listenerCount('SIGINT'), initialSigintCount + 1);
+    assert.equal(process.listenerCount('SIGTERM'), initialSigtermCount + 1);
+
+    cleanup();
+    assert.equal(process.listenerCount('SIGINT'), initialSigintCount);
+    assert.equal(process.listenerCount('SIGTERM'), initialSigtermCount);
+  });
 });
+

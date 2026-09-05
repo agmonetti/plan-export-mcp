@@ -15,9 +15,11 @@ import { parseArgs } from 'node:util';
 import { exportPlan, closeBrowser } from './exporter.js';
 import type { ExportPlanOptions, ExportFormat, Theme } from './types.js';
 import { z } from 'zod';
+import { performGracefulShutdown, setupShutdownHandlers, gracefulExit } from './shutdown.js';
 export { ExportService, defaultExportService, exportPlan, closeBrowser, getBrowser } from './exporter.js';
 export { ExportError, SecurityError, BrowserError } from './errors.js';
 export { CONFIG } from './config.js';
+export { performGracefulShutdown, setupShutdownHandlers, gracefulExit } from './shutdown.js';
 
 const ExportPlanSchema = z.object({
   input: z
@@ -180,18 +182,12 @@ export async function runMcpServer() {
   const transport = new StdioServerTransport();
 
   const handleDisconnect = async () => {
-    try {
-      await closeBrowser();
-      await server.close();
-    } catch {
-      // ignore
-    } finally {
-      process.exit(0);
-    }
+    await performGracefulShutdown(0, server);
   };
 
-  process.stdin.on('end', handleDisconnect);
-  process.stdin.on('close', handleDisconnect);
+  process.stdin.once('end', handleDisconnect);
+  process.stdin.once('close', handleDisconnect);
+  setupShutdownHandlers(server);
 
   await server.connect(transport);
 }
@@ -212,7 +208,8 @@ export async function runCli(args: string[]) {
     });
   } catch (err: any) {
     console.error(`Error: ${sanitizeErrorMessage(err)}`);
-    process.exit(1);
+    gracefulExit(1);
+    return;
   }
 
   const { values, positionals } = parsed;
@@ -239,7 +236,8 @@ Options:
   const inputFile = positionals[0];
   if (!inputFile) {
     console.error('Error: Please provide a markdown file path or run without arguments for MCP mode.');
-    process.exit(1);
+    gracefulExit(1);
+    return;
   }
 
   let theme: Theme = 'dark';
@@ -249,7 +247,8 @@ Options:
       theme = rawTheme;
     } else {
       console.error(`Error: Invalid theme "${rawTheme}". Only "dark" or "light" are supported.`);
-      process.exit(1);
+      gracefulExit(1);
+      return;
     }
   }
 
@@ -268,7 +267,8 @@ Options:
 
   if (parsedFormats.length === 0) {
     console.error('Error: At least one valid export format must be specified (pdf, png, or html).');
-    process.exit(1);
+    gracefulExit(1);
+    return;
   }
   const formats = parsedFormats;
 
@@ -291,7 +291,7 @@ Options:
     }
   } catch (err: any) {
     console.error(`Error: ${sanitizeErrorMessage(err)}`);
-    process.exit(1);
+    gracefulExit(1);
   } finally {
     await closeBrowser();
   }
@@ -320,6 +320,6 @@ function isDirectExecution(): boolean {
 if (isDirectExecution()) {
   main().catch((err) => {
     console.error(`Fatal error in plan-export-mcp: ${sanitizeErrorMessage(err)}`);
-    process.exit(1);
+    gracefulExit(1);
   });
 }
