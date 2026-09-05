@@ -1,6 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import taskLists from 'markdown-it-task-lists';
-import { createHighlighter, type Highlighter } from 'shiki';
+import { createHighlighter, bundledLanguages, type Highlighter } from 'shiki';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -11,23 +11,24 @@ const __dirname = path.dirname(__filename);
 
 let highlighterInstance: Highlighter | null = null;
 
-const SUPPORTED_LANGS = [
+const DEFAULT_LANGS = [
   'typescript',
   'javascript',
   'json',
   'bash',
   'sh',
-  'shell',
   'python',
+  'java',
+  'properties',
   'sql',
   'yaml',
-  'yml',
   'diff',
   'markdown',
-  'md',
   'html',
   'css',
   'dockerfile',
+  'csharp',
+  'kotlin',
   'rust',
   'go',
   'text',
@@ -37,7 +38,7 @@ async function getHighlighter(): Promise<Highlighter> {
   if (!highlighterInstance) {
     highlighterInstance = await createHighlighter({
       themes: ['github-dark', 'github-light'],
-      langs: SUPPORTED_LANGS,
+      langs: DEFAULT_LANGS,
     });
   }
   return highlighterInstance;
@@ -64,12 +65,11 @@ function githubAlertsPlugin(md: MarkdownIt) {
             const rawType = match[1].toLowerCase();
             const type = rawType in ALERT_ICONS ? rawType : 'note';
             const titleText = rawType.charAt(0).toUpperCase() + rawType.slice(1);
-            
+
             tokens[i].type = 'alert_open';
             tokens[i].tag = 'div';
             tokens[i].attrs = [['class', `markdown-alert markdown-alert-${type}`]];
 
-            // Strip the marker from inline content
             nextInline.content = match[2].trim();
             if (nextInline.children && nextInline.children.length > 0) {
               const firstChild = nextInline.children[0];
@@ -78,13 +78,11 @@ function githubAlertsPlugin(md: MarkdownIt) {
               }
             }
 
-            // Insert alert title token right before the paragraph content
             const titleOpen = new state.Token('html_inline', '', 0);
             titleOpen.content = `<p class="markdown-alert-title">${ALERT_ICONS[type]} ${titleText}</p>`;
             tokens.splice(i + 1, 0, titleOpen);
-            i++; // shift index
+            i++;
 
-            // Close matching blockquote_close
             let depth = 1;
             for (let j = i + 1; j < tokens.length; j++) {
               if (tokens[j].type === 'blockquote_open') depth++;
@@ -105,7 +103,6 @@ function githubAlertsPlugin(md: MarkdownIt) {
 }
 
 function getMermaidBundle(): string {
-  // Check local node_modules first for 100% offline capability
   const localPaths = [
     path.join(__dirname, '../node_modules/mermaid/dist/mermaid.min.js'),
     path.join(__dirname, '../../node_modules/mermaid/dist/mermaid.min.js'),
@@ -151,65 +148,82 @@ export function getThemeStyles(theme: Theme): string {
       --alert-caution-text: ${isDark ? '#f85149' : '#cf222e'};
     }
 
+    @page {
+      size: A4;
+      margin: 0;
+    }
+
     * {
       box-sizing: border-box;
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
     }
 
-    body {
-      background-color: var(--bg-color);
+    html, body {
+      background-color: var(--bg-color) !important;
       color: var(--text-color);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
-      font-size: 15px;
-      line-height: 1.6;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 10pt;
+      line-height: 1.55;
       margin: 0;
-      padding: 48px 36px;
+      padding: 0;
       word-wrap: break-word;
       -webkit-font-smoothing: antialiased;
     }
 
-    .plan-container {
-      max-width: 880px;
+    .plan-wrapper {
+      padding: 16mm 16mm;
+      max-width: 900px;
       margin: 0 auto;
     }
 
     h1, h2, h3, h4, h5, h6 {
       color: var(--heading-color);
       font-weight: 600;
-      line-height: 1.25;
-      margin-top: 24px;
-      margin-bottom: 16px;
+      line-height: 1.3;
+      page-break-after: avoid !important;
+      break-after: avoid !important;
     }
 
     h1 {
-      font-size: 2rem;
-      padding-bottom: 0.3em;
+      font-size: 18pt;
+      padding-bottom: 6pt;
       border-bottom: 1px solid var(--border-color);
       margin-top: 0;
+      margin-bottom: 12pt;
     }
 
     h2 {
-      font-size: 1.5rem;
-      padding-bottom: 0.3em;
+      font-size: 13pt;
+      padding-bottom: 4pt;
       border-bottom: 1px solid var(--subtle-border);
-      margin-top: 32px;
+      margin-top: 18pt;
+      margin-bottom: 8pt;
     }
 
-    h3 { font-size: 1.25rem; }
-    h4 { font-size: 1rem; }
+    h3 {
+      font-size: 11pt;
+      margin-top: 14pt;
+      margin-bottom: 6pt;
+    }
+
+    h4 {
+      font-size: 10pt;
+      margin-top: 10pt;
+      margin-bottom: 4pt;
+    }
 
     p, ul, ol {
       margin-top: 0;
-      margin-bottom: 16px;
+      margin-bottom: 8pt;
     }
 
     ul, ol {
-      padding-left: 2em;
+      padding-left: 1.6em;
     }
 
-    li + li {
-      margin-top: 0.25em;
+    li {
+      margin-bottom: 3pt;
     }
 
     a {
@@ -217,48 +231,84 @@ export function getThemeStyles(theme: Theme): string {
       text-decoration: none;
     }
 
-    a:hover {
-      text-decoration: underline;
+    /* Badges & File Tags */
+    .badge {
+      display: inline-block;
+      padding: 2px 7px;
+      font-size: 8pt;
+      font-weight: 700;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      vertical-align: middle;
     }
+    .badge-modify { background: rgba(210, 153, 34, 0.2); color: #e3b341; border: 1px solid rgba(210, 153, 34, 0.4); }
+    .badge-new { background: rgba(46, 160, 67, 0.2); color: #3fb950; border: 1px solid rgba(46, 160, 67, 0.4); }
+    .badge-delete { background: rgba(248, 81, 73, 0.2); color: #f85149; border: 1px solid rgba(248, 81, 73, 0.4); }
+
+    .file-name {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 9pt;
+      font-weight: 600;
+      color: #58a6ff;
+      background: var(--code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--border-color);
+    }
+
+    /* Status Pills in Tables */
+    .status-pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 8pt;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .status-success { background: rgba(46, 160, 67, 0.2); color: #3fb950; border: 1px solid rgba(46, 160, 67, 0.4); }
+    .status-warning { background: rgba(210, 153, 34, 0.2); color: #e3b341; border: 1px solid rgba(210, 153, 34, 0.4); }
+    .status-danger { background: rgba(248, 81, 73, 0.2); color: #f85149; border: 1px solid rgba(248, 81, 73, 0.4); }
 
     /* Task lists */
     .contains-task-list {
       list-style-type: none;
-      padding-left: 0.5em;
+      padding-left: 0.2em;
     }
 
     .task-list-item {
       display: flex;
       align-items: flex-start;
-      margin-bottom: 6px;
+      margin-bottom: 4pt;
     }
 
     .task-list-item input[type="checkbox"] {
-      margin: 0.25em 0.6em 0 0;
+      margin: 0.2em 0.5em 0 0;
       cursor: default;
       accent-color: var(--link-color);
-      transform: scale(1.1);
+      transform: scale(1.05);
     }
 
     /* Code Blocks */
     .code-card {
-      margin: 16px 0 24px 0;
+      margin: 8pt 0 14pt 0;
       border: 1px solid var(--border-color);
-      border-radius: 8px;
-      overflow: hidden;
+      border-radius: 6px;
       background-color: var(--code-bg);
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
     }
 
     .code-card-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 6px 14px;
+      padding: 4pt 10pt;
       background-color: ${isDark ? '#161b22' : '#f6f8fa'};
       border-bottom: 1px solid var(--border-color);
       font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-      font-size: 12px;
+      font-size: 8pt;
       color: ${isDark ? '#8b949e' : '#656d76'};
       text-transform: uppercase;
       letter-spacing: 0.05em;
@@ -267,61 +317,66 @@ export function getThemeStyles(theme: Theme): string {
 
     .code-card pre.shiki {
       margin: 0 !important;
-      padding: 16px !important;
+      padding: 8pt 12pt !important;
       border-radius: 0 !important;
       font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace !important;
-      font-size: 13.5px !important;
-      line-height: 1.55 !important;
-      overflow-x: auto;
+      font-size: 8.5pt !important;
+      line-height: 1.5 !important;
       background-color: transparent !important;
+      white-space: pre-wrap !important;
+      word-break: break-word !important;
     }
 
-    code:not(pre code) {
+    code:not(pre code):not(.file-name) {
       font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
       font-size: 85%;
-      padding: 0.2em 0.4em;
-      margin: 0;
-      background-color: ${isDark ? 'rgba(110,118,129,0.4)' : 'rgba(175,184,193,0.2)'};
-      border-radius: 4px;
+      padding: 0.15em 0.35em;
+      background-color: ${isDark ? 'rgba(110,118,129,0.35)' : 'rgba(175,184,193,0.2)'};
+      border-radius: 3px;
     }
 
     /* Tables */
     table {
-      border-spacing: 0;
-      border-collapse: collapse;
-      margin-top: 0;
-      margin-bottom: 16px;
-      width: 100%;
-      overflow: auto;
-      display: block;
+      display: table !important;
+      width: 100% !important;
+      border-collapse: collapse !important;
+      margin: 8pt 0 14pt 0;
+      font-size: 8.5pt;
+      line-height: 1.45;
+      page-break-inside: auto !important;
+      break-inside: auto !important;
       border: 1px solid var(--border-color);
       border-radius: 6px;
     }
 
-    table th, table td {
-      padding: 8px 14px;
-      border-top: 1px solid var(--border-color);
-      border-right: 1px solid var(--border-color);
+    thead {
+      display: table-header-group !important;
     }
 
-    table th:last-child, table td:last-child {
-      border-right: none;
+    tr {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+
+    table th, table td {
+      padding: 6pt 8pt;
+      border: 1px solid var(--border-color);
+      vertical-align: top;
     }
 
     table th {
       font-weight: 600;
-      background-color: ${isDark ? '#161b22' : '#f6f8fa'};
+      background-color: ${isDark ? '#161b22' : '#f6f8fa'} !important;
       color: var(--heading-color);
-      border-top: none;
     }
 
     table tr:nth-child(2n) {
-      background-color: var(--table-row-alt);
+      background-color: var(--table-row-alt) !important;
     }
 
     /* Blockquotes */
     blockquote {
-      margin: 16px 0;
+      margin: 10pt 0;
       padding: 0 1em;
       color: ${isDark ? '#8b949e' : '#656d76'};
       border-left: 0.25em solid var(--border-color);
@@ -329,21 +384,23 @@ export function getThemeStyles(theme: Theme): string {
 
     /* GitHub Alerts */
     .markdown-alert {
-      padding: 12px 16px;
-      margin-bottom: 18px;
+      padding: 10pt 12pt;
+      margin-bottom: 12pt;
       color: inherit;
       border-left: 4px solid var(--border-color);
       background-color: ${isDark ? 'rgba(110,118,129,0.1)' : 'rgba(175,184,193,0.1)'};
       border-radius: 0 6px 6px 0;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
     }
 
     .markdown-alert-title {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       font-weight: 600;
-      font-size: 14px;
-      margin-bottom: 6px;
+      font-size: 9.5pt;
+      margin-bottom: 4pt;
       line-height: 1;
     }
 
@@ -357,50 +414,27 @@ export function getThemeStyles(theme: Theme): string {
       flex-shrink: 0;
     }
 
-    .markdown-alert-note {
-      border-left-color: var(--alert-note-border);
-    }
-    .markdown-alert-note .markdown-alert-title {
-      color: var(--alert-note-text);
-    }
-
-    .markdown-alert-tip {
-      border-left-color: var(--alert-tip-border);
-    }
-    .markdown-alert-tip .markdown-alert-title {
-      color: var(--alert-tip-text);
-    }
-
-    .markdown-alert-important {
-      border-left-color: var(--alert-important-border);
-    }
-    .markdown-alert-important .markdown-alert-title {
-      color: var(--alert-important-text);
-    }
-
-    .markdown-alert-warning {
-      border-left-color: var(--alert-warning-border);
-    }
-    .markdown-alert-warning .markdown-alert-title {
-      color: var(--alert-warning-text);
-    }
-
-    .markdown-alert-caution {
-      border-left-color: var(--alert-caution-border);
-    }
-    .markdown-alert-caution .markdown-alert-title {
-      color: var(--alert-caution-text);
-    }
+    .markdown-alert-note { border-left-color: var(--alert-note-border); }
+    .markdown-alert-note .markdown-alert-title { color: var(--alert-note-text); }
+    .markdown-alert-tip { border-left-color: var(--alert-tip-border); }
+    .markdown-alert-tip .markdown-alert-title { color: var(--alert-tip-text); }
+    .markdown-alert-important { border-left-color: var(--alert-important-border); }
+    .markdown-alert-important .markdown-alert-title { color: var(--alert-important-text); }
+    .markdown-alert-warning { border-left-color: var(--alert-warning-border); }
+    .markdown-alert-warning .markdown-alert-title { color: var(--alert-warning-text); }
+    .markdown-alert-caution { border-left-color: var(--alert-caution-border); }
+    .markdown-alert-caution .markdown-alert-title { color: var(--alert-caution-text); }
 
     /* Mermaid Container */
     .mermaid-container {
-      margin: 20px 0 24px 0;
-      padding: 20px;
+      margin: 12pt 0;
+      padding: 14pt;
       background-color: ${isDark ? '#161b22' : '#f6f8fa'};
       border: 1px solid var(--border-color);
-      border-radius: 8px;
+      border-radius: 6px;
       text-align: center;
-      overflow-x: auto;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
     }
 
     .mermaid {
@@ -409,9 +443,9 @@ export function getThemeStyles(theme: Theme): string {
     }
 
     hr {
-      height: 0.25em;
+      height: 1px;
       padding: 0;
-      margin: 24px 0;
+      margin: 16pt 0;
       background-color: var(--border-color);
       border: 0;
     }
@@ -420,6 +454,31 @@ export function getThemeStyles(theme: Theme): string {
 
 export async function renderMarkdownToHtml(markdown: string, theme: Theme = 'dark'): Promise<string> {
   const highlighter = await getHighlighter();
+
+  // Scan and dynamically load any language found in markdown code blocks
+  const langMatches = markdown.matchAll(/```([a-zA-Z0-9_-]+)/g);
+  for (const match of langMatches) {
+    const rawLang = match[1].toLowerCase().trim();
+    if (rawLang && rawLang !== 'mermaid' && !highlighter.getLoadedLanguages().includes(rawLang)) {
+      if (rawLang in bundledLanguages) {
+        try {
+          await highlighter.loadLanguage(rawLang as any);
+        } catch {
+          // fallback gracefully
+        }
+      }
+    }
+  }
+
+  // Sanitize agent file links: [Filename](file:///...) -> <code class="file-name">Filename</code>
+  let processedMarkdown = markdown.replace(/\[([^\]]+)\]\(file:\/\/[^\)]+\)/g, '<code class="file-name">$1</code>');
+
+  // Sanitize action brackets: [MODIFY], [NEW], [DELETE] -> badges
+  processedMarkdown = processedMarkdown.replace(/\[(MODIFY|NEW|DELETE)\]/g, (m, action) => {
+    const cls = action === 'NEW' ? 'badge-new' : action === 'MODIFY' ? 'badge-modify' : 'badge-delete';
+    return `<span class="badge ${cls}">${action}</span>`;
+  });
+
   const shikiTheme = theme === 'dark' ? 'github-dark' : 'github-light';
 
   const md = new MarkdownIt({
@@ -440,7 +499,7 @@ export async function renderMarkdownToHtml(markdown: string, theme: Theme = 'dar
         theme: shikiTheme,
       });
 
-      const displayLang = normalizedLang || 'text';
+      const displayLang = normalizedLang || 'code';
 
       return `
         <div class="code-card">
@@ -456,7 +515,17 @@ export async function renderMarkdownToHtml(markdown: string, theme: Theme = 'dar
   md.use(taskLists, { enabled: true });
   md.use(githubAlertsPlugin);
 
-  const renderedContent = md.render(markdown);
+  let renderedContent = md.render(processedMarkdown);
+
+  // Status pills in tables
+  renderedContent = renderedContent.replace(/<td>\s*(Cumplido|Faltante Crítico|Parcial con redundancia|Parcial|Defecto de Diseño|Mal implementado en DTO|Approved|Pending|Rejected|Completed)\s*<\/td>/gi, (match, status) => {
+    const s = status.toLowerCase();
+    let pillClass = 'status-warning';
+    if (s.includes('cumplido') || s.includes('approved') || s.includes('completed')) pillClass = 'status-success';
+    else if (s.includes('crítico') || s.includes('defecto') || s.includes('mal') || s.includes('rejected')) pillClass = 'status-danger';
+    return `<td><span class="status-pill ${pillClass}">${status}</span></td>`;
+  });
+
   const styles = getThemeStyles(theme);
 
   const localMermaid = getMermaidBundle();
@@ -477,7 +546,7 @@ export async function renderMarkdownToHtml(markdown: string, theme: Theme = 'dar
   </style>
 </head>
 <body>
-  <div class="plan-container">
+  <div class="plan-wrapper">
     ${renderedContent}
   </div>
   ${mermaidScriptTag}

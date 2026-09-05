@@ -30,94 +30,122 @@ Exporting HTML to pixel-perfect PDF and high-res PNG requires a headless Chromiu
 
 ---
 
-## 2. Mermaid Diagram Asynchronous Rendering
+## 2. Full-Bleed Dark Theme in Puppeteer PDFs (The White Margin Trap)
 
 ### Context
-Mermaid is not a static server-side Markdown transform; it calculates SVG layouts (dagre/elk) directly within a DOM environment.
+When generating PDFs in dark mode, passing margins via Puppeteer options `page.pdf({ margin: { top: '20mm', ... } })` forces Chromium's Skia engine to render the margin area as blank, unpainted white paper. The dark HTML body gets framed inside an ugly white border.
 
 ### Pitfalls & Solutions
-- **Premature Snapshot Bug:** If the headless browser takes a snapshot immediately after `page.setContent()`, Mermaid diagrams will render as unparsed text blocks or broken empty containers.
-- **Resolution:** 
-  1. Inject Mermaid JS script into the rendered HTML template.
-  2. Call `mermaid.initialize({ startOnLoad: true, theme: theme === 'dark' ? 'dark' : 'default' })`.
-  3. Wait explicitly in the headless page before taking a snapshot:
+- **Resolution:**
+  1. Always set `margin: { top: '0', right: '0', bottom: '0', left: '0' }` in `page.pdf()`.
+  2. Apply CSS `@page { size: A4; margin: 0; }`.
+  3. Ensure both `html` and `body` have `background-color: var(--bg-color) !important; margin: 0; padding: 0;`.
+  4. Handle inner printable padding via a root container: `.plan-wrapper { padding: 16mm 16mm; }`.
+  This produces a flawless edge-to-edge dark document with zero white letterboxing.
+
+---
+
+## 3. Chromium Print Engine Pagination & The `overflow` Bug
+
+### Context
+In multi-page PDF generation, table rows get cut in half across page boundaries, code cards split in awkward places (e.g. card header on page N, code lines on page N+1), and headings get stranded alone at the bottom of pages (orphan headers).
+
+### Pitfalls & Solutions
+- **The Overflow Bug:** In Chromium's print layout engine, any element styled with `overflow: hidden` or `overflow: auto` cancels `break-inside: avoid` / `page-break-inside: avoid`.
+  - **Resolution for Code Blocks:**
+    ```css
+    .code-card {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+      overflow: visible !important;
+    }
+    .code-card pre.shiki {
+      overflow: visible !important;
+      white-space: pre-wrap !important;
+      word-break: break-word !important;
+    }
+    ```
+- **Table Row Slicing:** When `table` is set to `display: block` (common in responsive web tables), Chromium destroys table pagination semantics.
+  - **Resolution:**
+    ```css
+    table {
+      display: table !important;
+      width: 100% !important;
+      border-collapse: collapse !important;
+      page-break-inside: auto !important;
+    }
+    thead {
+      display: table-header-group !important; /* Repeats table header across every page */
+    }
+    tr {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+    ```
+- **Orphan Headings:**
+  ```css
+  h1, h2, h3, h4, h5, h6 {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+  ```
+
+---
+
+## 4. Universal Syntax Highlighting via Dynamic Shiki Loading
+
+### Context
+Hardcoding a fixed language list (e.g. 10 languages) causes enterprise code blocks (`java`, `properties`, `csharp`, `kotlin`, `sql`) to fall back silently to plain text with zero color highlighting.
+
+### Pitfalls & Solutions
+- **Resolution:**
+  1. Shiki ships with 346 bundled grammars in `bundledLanguages`.
+  2. Scan the incoming Markdown with regex `/```([a-zA-Z0-9_-]+)/g` prior to rendering.
+  3. Dynamically invoke `await highlighter.loadLanguage(lang)` for any detected language.
+  4. Guarantees 100% full-color syntax highlighting for any tech stack without loading 346 grammars into memory upfront.
+
+---
+
+## 5. Normalizing AI Agent Artifacts (Links & Badges)
+
+### Context
+Coding agents frequently output raw IDE filesystem URIs (e.g. `[OrderService.java](file:///home/user/project/backend/...)`) and uppercase action tokens (e.g. `[MODIFY]`, `[NEW]`, `[DELETE]`). In print, 120-character URLs wrap into four lines of broken text.
+
+### Pitfalls & Solutions
+- **Resolution:**
+  - Strip local file links into clean file tags: `[Name](file://...)` -> `<code class="file-name">Name</code>`.
+  - Transform action tags into styled badge pills: `[MODIFY]` -> `<span class="badge badge-modify">MODIFY</span>`.
+  - Transform table verdict keywords (`Cumplido`, `Faltante`, `Parcial`, `Approved`) into color-coded status chips.
+
+---
+
+## 6. Mermaid Diagram Asynchronous Rendering
+
+### Context
+Mermaid renders vector diagrams asynchronously in the browser DOM. Taking a snapshot before the SVG layout completes results in blank containers.
+
+### Pitfalls & Solutions
+- **Resolution:**
+  1. Inject Mermaid bundle locally for offline capability.
+  2. Wait explicitly for SVG nodes:
      ```typescript
-     await page.evaluate(() => (window as any).mermaid?.run?.());
-     // Wait for all .mermaid elements to contain rendered SVG elements
      await page.waitForFunction(() => {
-       const nodes = document.querySelectorAll('.mermaid');
-       if (nodes.length === 0) return true;
-       return Array.from(nodes).every(n => n.querySelector('svg'));
-     }, { timeout: 5000 }).catch(() => {/* fallback: continue if no mermaid */});
+       const diagrams = document.querySelectorAll('.mermaid');
+       return diagrams.length === 0 || Array.from(diagrams).every(d => d.querySelector('svg'));
+     }, { timeout: 8000 });
      ```
 
 ---
 
-## 3. Dark Theme Fidelity in PDF Printing
+## 7. Typographic Scale & Density for Engineering Deliverables
 
 ### Context
-By default, Chromium's `page.pdf()` applies `@media print` CSS rules. Browsers aggressively strip dark backgrounds in print mode to save printer ink, turning dark themes into unreadable gray/white text.
+Web typography scales (e.g. 2rem / 32px headings) cause document sprawl on A4 paper, turning an 8-page implementation plan into 21 bloated, sparse pages.
 
 ### Pitfalls & Solutions
-- **Resolution:** 
-  1. Must pass `printBackground: true` to Chromium's PDF options.
-  2. Include CSS property on the root container:
-     ```css
-     * {
-       -webkit-print-color-adjust: exact !important;
-       print-color-adjust: exact !important;
-     }
-     ```
-  3. Call `page.emulateMediaType('screen')` prior to generating the PDF to preserve screen contrast, padding, and dark aesthetics.
-
----
-
-## 4. Crispness on Mobile Messaging (WhatsApp / Slack)
-
-### Context
-When images are uploaded to WhatsApp or Slack, their servers apply compression. A standard 1x resolution (DPR 1.0) image becomes blurry and illegible when zoomed in on a high-density mobile display (Retina/OLED).
-
-### Pitfalls & Solutions
-- **Resolution:**
-  1. Set viewport `deviceScaleFactor: 2` (2x Retina rendering) for PNG exports:
-     ```typescript
-     await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 2 });
-     ```
-  2. Use full-page screenshot (`page.screenshot({ fullPage: true, type: 'png' })`).
-  3. Fixed content width (e.g. `860px` centered with generous padding) guarantees that lines of code and tables do not stretch awkwardly on wide monitors, maintaining readability on mobile.
-
----
-
-## 5. Cross-Platform Font Rendering
-
-### Context
-Developer fonts (like JetBrains Mono, Inter, Fira Code) may not be installed on the machine running the MCP server. Without proper fallbacks, code blocks look inconsistent or misaligned across macOS, Linux, and Windows.
-
-### Pitfalls & Solutions
-- **Resolution:**
-  - Modern system font stack for body text:
-    ```css
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
-    ```
-  - Monospace font stack with zero-dependency fallback:
-    ```css
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-    ```
-  - Code line-height set to `1.5` with explicit subpixel antialiasing:
-    ```css
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    ```
-
----
-
-## 6. Shiki Code Highlighting & Bundle Strategy
-
-### Context
-Shiki uses TextMate grammars and Oniguruma WASM engine. Loading all languages upfront increases cold start time and bundle weight.
-
-### Pitfalls & Solutions
-- **Resolution:**
-  - Use `createHighlighter` with bundled `github-dark` and `github-light` themes.
-  - Pre-load common languages for AI agent plans: `typescript`, `javascript`, `json`, `bash`, `python`, `sql`, `yaml`, `diff`, `markdown`, `html`, `css`.
-  - Fallback to plain text gracefully if an unknown language is encountered, preventing crashes during export.
+- **Harmonious Print Scale:**
+  - H1: `18pt` (title), H2: `13pt` (sections), H3: `11pt` (subsections).
+  - Body text: `10pt` with `1.55` line-height.
+  - Table text: `8.5pt` with `6pt 8pt` cell padding.
+  - Code text: `8.5pt` with `1.5` line-height.
+  This achieves optimal information density matching professional engineering audit standards.

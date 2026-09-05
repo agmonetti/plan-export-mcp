@@ -1,8 +1,4 @@
-# plan-export-mcp 🚀
-
-[![npm version](https://img.shields.io/npm/v/plan-export-mcp.svg)](https://www.npmjs.com/package/plan-export-mcp)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-green.svg)](https://modelcontextprotocol.io/)
+# plan-export-mcp
 
 > **Export AI agent implementation plans and architectural audits into gorgeous, IDE-grade PDFs, high-res PNGs, and self-contained HTML files ready to share on WhatsApp, Slack, or Email.**
 

@@ -179,10 +179,10 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
         format: 'A4',
         printBackground: true,
         margin: {
-          top: '20mm',
-          bottom: '20mm',
-          left: '15mm',
-          right: '15mm',
+          top: '0',
+          bottom: '0',
+          left: '0',
+          right: '0',
         },
       });
       results.push({ format: 'pdf', path: pdfPath });
