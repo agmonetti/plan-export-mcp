@@ -192,7 +192,7 @@ export async function runCli(args: string[]) {
       allowPositionals: true,
     });
   } catch (err: any) {
-    console.error(`Error: ${err.message}`);
+    console.error(`Error: ${sanitizeErrorMessage(err)}`);
     process.exit(1);
   }
 
@@ -255,21 +255,26 @@ Options:
   const outputDir = values['output-dir'] || './exports';
   const outputName = values['output-name'];
 
-  console.log(`Exporting ${inputFile} (${theme} theme)...`);
-  const results = await exportPlan({
-    input: inputFile,
-    theme,
-    formats,
-    outputDir,
-    outputName,
-  });
+  try {
+    console.log(`Exporting ${inputFile} (${theme} theme)...`);
+    const results = await exportPlan({
+      input: inputFile,
+      theme,
+      formats,
+      outputDir,
+      outputName,
+    });
 
-  console.log('Done!');
-  for (const r of results) {
-    console.log(`  - [${r.format.toUpperCase()}] ${r.path}`);
+    console.log('Done!');
+    for (const r of results) {
+      console.log(`  - [${r.format.toUpperCase()}] ${r.path}`);
+    }
+  } catch (err: any) {
+    console.error(`Error: ${sanitizeErrorMessage(err)}`);
+    process.exit(1);
+  } finally {
+    await closeBrowser();
   }
-
-  await closeBrowser();
 }
 
 async function main() {
@@ -294,7 +299,7 @@ function isDirectExecution(): boolean {
 
 if (isDirectExecution()) {
   main().catch((err) => {
-    console.error('Fatal error in plan-export-mcp:', err);
+    console.error(`Fatal error in plan-export-mcp: ${sanitizeErrorMessage(err)}`);
     process.exit(1);
   });
 }
