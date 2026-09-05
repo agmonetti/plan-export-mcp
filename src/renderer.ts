@@ -582,8 +582,10 @@ export async function renderMarkdownToHtml(
     // Hybrid: In standalone exported HTML, use official CDN to keep file lightweight (~30KB)
     // In Puppeteer (offline/headless export), use bundled script for speed and network isolation
     const useCdn = options.standaloneHtml === true || !localMermaid;
+    const MERMAID_VERSION = '11.17.2';
+    const MERMAID_SRI = 'sha384-EOXBFmc3gx5mb+vn0vPvvGqACToJD24hhacX5Yx+8NUUQrHIle/Qi5Bg9o3zKwW2';
     const mermaidScriptTag = useCdn
-      ? `<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>`
+      ? `<script src="https://cdn.jsdelivr.net/npm/mermaid@${MERMAID_VERSION}/dist/mermaid.min.js" integrity="${MERMAID_SRI}" crossorigin="anonymous"></script>`
       : `<script>${localMermaid}</script>`;
 
     const mermaidTheme = theme === 'dark' ? 'dark' : 'default';

@@ -78,7 +78,9 @@ describe('Markdown & HTML Renderer Tests', () => {
     assert.ok(html.includes('window.mermaid'));
     assert.ok(html.includes("securityLevel: 'strict'"));
     assert.ok(html.includes('class="mermaid"'));
-    assert.ok(html.includes('src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"'));
+    assert.ok(html.includes('src="https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.min.js"'));
+    assert.ok(html.includes('integrity="sha384-EOXBFmc3gx5mb+vn0vPvvGqACToJD24hhacX5Yx+8NUUQrHIle/Qi5Bg9o3zKwW2"'));
+    assert.ok(html.includes('crossorigin="anonymous"'));
   });
 
   it('should escape malicious HTML inside Mermaid diagram content', async () => {
