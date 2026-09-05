@@ -134,6 +134,13 @@ describe('Security & Input Validation Tests', () => {
       const fallback = sanitizeBaseName('////:::***');
       assert.match(fallback, /^plan-\d+$/);
     });
+
+    it('should reject null bytes in rawName', () => {
+      assert.throws(
+        () => sanitizeBaseName('my-plan\0.txt'),
+        /Null bytes are not permitted/
+      );
+    });
   });
 
   describe('assertInsideDir', () => {

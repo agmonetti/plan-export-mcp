@@ -201,6 +201,9 @@ export function resolveSafeMarkdownInput(input: string): { content: string; deri
 }
 
 export function sanitizeBaseName(rawName: string): string {
+  if (typeof rawName === 'string' && rawName.includes('\0')) {
+    throw new Error('Security Exception: Null bytes are not permitted in output name.');
+  }
   const base = path.basename(rawName).trim();
   const sanitized = base.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
   return sanitized.replace(/^_+|_+$/g, '') || `plan-${Date.now()}`;
