@@ -191,7 +191,7 @@ function getMermaidBundle(): string {
         return raw
           .replace(/<\/script/gi, '<\\/script')
           .replace(/<\/body/gi, '<\\/body')
-          .replace(/<\/html/gi, '<\\/html>');
+          .replace(/<\/html/gi, '<\\/html');
       } catch {
         // continue
       }
