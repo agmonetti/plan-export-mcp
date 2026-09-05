@@ -64,11 +64,38 @@ describe('Markdown & HTML Renderer Tests', () => {
 
   it('should inject Mermaid scripts and relax CSP only when diagrams exist', async () => {
     const mermaidMd = '```mermaid\ngraph TD\nA --> B\n```';
-    const html = await renderMarkdownToHtml(mermaidMd, 'dark');
+    const html = await renderMarkdownToHtml(mermaidMd, 'dark', { standaloneHtml: true });
 
     assert.ok(html.includes("script-src 'unsafe-inline' https://cdn.jsdelivr.net"));
     assert.ok(html.includes('window.mermaid'));
     assert.ok(html.includes("securityLevel: 'strict'"));
     assert.ok(html.includes('class="mermaid"'));
+    assert.ok(html.includes('src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"'));
+  });
+
+  it('should neutralize interactive form inputs and force disabled checkboxes', async () => {
+    const formInputMd = `
+- [x] Legitimate task
+<input type="password" name="pwd" value="1234">
+<input type="text" name="user" value="admin">
+<input type="submit" value="Phish">
+`;
+    const html = await renderMarkdownToHtml(formInputMd, 'dark');
+
+    assert.ok(!html.includes('type="password"'), 'Should neutralize password input');
+    assert.ok(!html.includes('type="text"'), 'Should neutralize text input');
+    assert.ok(!html.includes('type="submit"'), 'Should neutralize submit input');
+    assert.ok(html.includes('type="checkbox"'), 'Should preserve checkbox input');
+    assert.ok(html.includes('disabled="disabled"'), 'Should enforce disabled on checkbox');
+  });
+
+  it('should sanitize dangerous CSS styles containing url() or expressions', async () => {
+    const cssMd = `
+<div style="background-color: url('https://evil.com/leak'); color: #ff0000;">Styled text</div>
+`;
+    const html = await renderMarkdownToHtml(cssMd, 'dark');
+
+    assert.ok(!html.includes("url("), 'Should strip url() from style attributes');
+    assert.ok(html.includes('color:#ff0000') || html.includes('color: #ff0000'), 'Should preserve safe hex colors');
   });
 });

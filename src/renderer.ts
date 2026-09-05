@@ -33,14 +33,35 @@ const SANITIZE_HTML_OPTIONS: sanitizeHtml.IOptions = {
     td: ['style', 'align', 'colspan', 'rowspan'],
     details: ['open'],
   },
+  transformTags: {
+    input: (tagName, attribs) => {
+      // Security: Strictly enforce type="checkbox" and disabled="disabled"
+      // Neutralize any form inputs, passwords, text boxes, or submission buttons
+      if (attribs.type !== 'checkbox') {
+        return {
+          tagName: 'span',
+          attribs: {},
+        };
+      }
+      return {
+        tagName: 'input',
+        attribs: {
+          type: 'checkbox',
+          disabled: 'disabled',
+          ...(attribs.checked !== undefined ? { checked: 'checked' } : {}),
+          ...(attribs.class ? { class: attribs.class } : {}),
+        },
+      };
+    },
+  },
   allowedStyles: {
     '*': {
-      'color': [/.*/],
-      'background-color': [/.*/],
-      'text-align': [/.*/],
-      'font-weight': [/.*/],
-      'width': [/.*/],
-      'height': [/.*/],
+      'color': [/^\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)|var\(--[a-zA-Z0-9_-]+\)|[a-zA-Z]+)\s*$/],
+      'background-color': [/^\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)|var\(--[a-zA-Z0-9_-]+\)|[a-zA-Z]+)\s*$/],
+      'text-align': [/^(left|right|center|justify)$/],
+      'font-weight': [/^(bold|normal|[1-9]00)$/],
+      'width': [/^\d+(px|em|rem|%)?$/],
+      'height': [/^\d+(px|em|rem|%)?$/],
     },
   },
   allowedSchemes: ['http', 'https', 'mailto'],
@@ -470,17 +491,29 @@ export function getThemeStyles(theme: Theme): string {
   `;
 }
 
-export async function renderMarkdownToHtml(markdown: string, theme: Theme = 'dark'): Promise<string> {
+export interface RenderOptions {
+  standaloneHtml?: boolean;
+}
+
+export async function renderMarkdownToHtml(
+  markdown: string,
+  theme: Theme = 'dark',
+  options: RenderOptions = {}
+): Promise<string> {
   const highlighter = await getHighlighter();
 
-  // Scan and dynamically load any language found in markdown code blocks
+  // Scan and dynamically load any language found in markdown code blocks (capped to prevent memory exhaustion)
+  const MAX_DYNAMIC_LANGS = 20;
+  let loadedLangsCount = 0;
   const langMatches = markdown.matchAll(/```([a-zA-Z0-9_-]+)/g);
   for (const match of langMatches) {
+    if (loadedLangsCount >= MAX_DYNAMIC_LANGS) break;
     const rawLang = match[1].toLowerCase().trim();
     if (rawLang && rawLang !== 'mermaid' && !highlighter.getLoadedLanguages().includes(rawLang)) {
       if (rawLang in bundledLanguages) {
         try {
           await highlighter.loadLanguage(rawLang as any);
+          loadedLangsCount++;
         } catch (err) {
           process.stderr.write(
             `[plan-export-mcp] Warning: Could not dynamically load grammar for language "${rawLang}": ${err instanceof Error ? err.message : String(err)}\n`
@@ -490,15 +523,8 @@ export async function renderMarkdownToHtml(markdown: string, theme: Theme = 'dar
     }
   }
 
-  // Neutralize hazardous elements, inline event handlers, and javascript: links
-  const sanitizedMarkdown = markdown
-    .replace(/<\s*(script|iframe|object|embed|applet|base)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
-    .replace(/<\s*(script|iframe|object|embed|applet|base)\b[^>]*\/?>/gi, '')
-    .replace(/\bon[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-    .replace(/\bhref\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*'|javascript:[^\s>]+)/gi, 'href="#"');
-
   const shikiTheme = theme === 'dark' ? 'github-dark' : 'github-light';
-  const hasMermaid = /(?:^|\n)```mermaid\b/.test(sanitizedMarkdown);
+  const hasMermaid = /(?:^|\n)```mermaid\b/.test(markdown);
 
   const md = new MarkdownIt({
     html: true,
@@ -529,7 +555,7 @@ export async function renderMarkdownToHtml(markdown: string, theme: Theme = 'dar
   md.use(githubAlertsPlugin);
 
   // Normalize local IDE file links ([File](file:///...)) into clean inline code: `File`
-  const normalizedMarkdown = sanitizedMarkdown.replace(
+  const normalizedMarkdown = markdown.replace(
     /\[([^\]]+)\]\((?:file|vscode|cursor|windsurf):\/\/[^\)]+\)/g,
     (_, label) => {
       const clean = label.trim().replace(/^`+|`+$/g, '');
@@ -544,9 +570,12 @@ export async function renderMarkdownToHtml(markdown: string, theme: Theme = 'dar
   let mermaidAssets = '';
   if (hasMermaid) {
     const localMermaid = getMermaidBundle();
-    const mermaidScriptTag = localMermaid
-      ? `<script>${localMermaid}</script>`
-      : `<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>`;
+    // Hybrid: In standalone exported HTML, use official CDN to keep file lightweight (~30KB)
+    // In Puppeteer (offline/headless export), use bundled script for speed and network isolation
+    const useCdn = options.standaloneHtml === true || !localMermaid;
+    const mermaidScriptTag = useCdn
+      ? `<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>`
+      : `<script>${localMermaid}</script>`;
 
     const mermaidTheme = theme === 'dark' ? 'dark' : 'default';
 

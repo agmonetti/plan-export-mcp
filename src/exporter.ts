@@ -357,15 +357,14 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
       fs.mkdirSync(resolvedOutputDir, { recursive: true });
     }
 
-    // Render markdown to fully styled HTML
-    const fullHtml = await renderMarkdownToHtml(markdownContent, theme);
     const results: ExportResult[] = [];
 
-    // Format: HTML
+    // Format: HTML (Standalone lightweight output with CDN Mermaid if present)
     if (formats.includes('html')) {
+      const standaloneHtml = await renderMarkdownToHtml(markdownContent, theme, { standaloneHtml: true });
       const htmlPath = path.join(resolvedOutputDir, `${safeBaseName}.html`);
       assertInsideDir(htmlPath, resolvedOutputDir);
-      fs.writeFileSync(htmlPath, fullHtml, 'utf-8');
+      fs.writeFileSync(htmlPath, standaloneHtml, 'utf-8');
       results.push({ format: 'html', path: htmlPath });
     }
 
@@ -374,6 +373,8 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
       return results;
     }
 
+    // Render HTML for headless browser (using local offline bundle for Mermaid)
+    const browserHtml = await renderMarkdownToHtml(markdownContent, theme, { standaloneHtml: false });
     const browser = await getBrowser();
     const page = await browser.newPage();
 
@@ -427,14 +428,14 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
       page.setDefaultTimeout(OPERATION_TIMEOUT_MS);
 
       // Attack surface reduction: disable JavaScript entirely when Mermaid diagrams are not present
-      const hasMermaid = fullHtml.includes('class="mermaid');
+      const hasMermaid = browserHtml.includes('class="mermaid');
       if (!hasMermaid) {
         await page.setJavaScriptEnabled(false);
       }
 
       // 2x Retina DPR for crisp, high-density display
       await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 2 });
-      await page.setContent(fullHtml, { waitUntil: 'load', timeout: OPERATION_TIMEOUT_MS });
+      await page.setContent(browserHtml, { waitUntil: 'load', timeout: OPERATION_TIMEOUT_MS });
 
       // Wait for Mermaid diagrams if present
       if (hasMermaid) {
