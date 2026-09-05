@@ -11,6 +11,7 @@ import {
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { parseArgs } from 'node:util';
 import { exportPlan, closeBrowser } from './exporter.js';
 import type { ExportPlanOptions, ExportFormat, Theme } from './types.js';
 import { z } from 'zod';
@@ -31,8 +32,13 @@ const ExportPlanSchema = z.object({
 export function sanitizeErrorMessage(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
   const cwd = process.cwd();
-  // Strip working directory path references
-  let sanitized = raw.split(cwd).join('.');
+  const root = path.parse(cwd).root;
+
+  let sanitized = raw;
+  // Strip working directory path references only if not at system root
+  if (cwd !== root) {
+    sanitized = sanitized.split(cwd).join('.');
+  }
   // Strip user home directories in common OS paths to prevent user enumeration
   sanitized = sanitized
     .replace(/\/home\/[a-zA-Z0-9._-]+/g, '/home/[user]')
@@ -149,7 +155,27 @@ export async function runMcpServer() {
 }
 
 export async function runCli(args: string[]) {
-  if (args.includes('--help') || args.includes('-h')) {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args,
+      options: {
+        theme: { type: 'string', default: 'dark' },
+        formats: { type: 'string', default: 'png,pdf' },
+        'output-dir': { type: 'string', default: './exports' },
+        'output-name': { type: 'string' },
+        help: { type: 'boolean', short: 'h', default: false },
+      },
+      allowPositionals: true,
+    });
+  } catch (err: any) {
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
+  }
+
+  const { values, positionals } = parsed;
+
+  if (values.help) {
     console.log(`
 plan-export-mcp v0.1.0
 
@@ -167,16 +193,15 @@ Options:
     return;
   }
 
-  const inputFile = args.find((a) => !a.startsWith('-'));
+  const inputFile = positionals[0];
   if (!inputFile) {
     console.error('Error: Please provide a markdown file path or run without arguments for MCP mode.');
     process.exit(1);
   }
 
-  const themeIndex = args.indexOf('--theme');
   let theme: Theme = 'dark';
-  if (themeIndex !== -1) {
-    const rawTheme = args[themeIndex + 1]?.toLowerCase();
+  if (values.theme) {
+    const rawTheme = values.theme.toLowerCase();
     if (rawTheme === 'light' || rawTheme === 'dark') {
       theme = rawTheme;
     } else {
@@ -186,12 +211,7 @@ Options:
   }
 
   const VALID_FORMATS = new Set<string>(['pdf', 'png', 'html']);
-  const formatsIndex = args.indexOf('--formats');
-  const formatsRaw = formatsIndex !== -1 ? args[formatsIndex + 1] : 'png,pdf';
-  if (!formatsRaw || formatsRaw.startsWith('-')) {
-    console.error('Error: --formats requires a comma-separated list of formats (e.g. png,pdf,html).');
-    process.exit(1);
-  }
+  const formatsRaw = values.formats || 'png,pdf';
   const parsedFormats = formatsRaw
     .split(',')
     .map((s) => s.trim().toLowerCase())
@@ -209,11 +229,8 @@ Options:
   }
   const formats = parsedFormats;
 
-  const dirIndex = args.indexOf('--output-dir');
-  const outputDir = dirIndex !== -1 ? args[dirIndex + 1] : './exports';
-
-  const nameIndex = args.indexOf('--output-name');
-  const outputName = nameIndex !== -1 ? args[nameIndex + 1] : undefined;
+  const outputDir = values['output-dir'] || './exports';
+  const outputName = values['output-name'];
 
   console.log(`Exporting ${inputFile} (${theme} theme)...`);
   const results = await exportPlan({

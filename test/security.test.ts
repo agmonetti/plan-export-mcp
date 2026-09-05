@@ -5,6 +5,7 @@ import {
   resolveSafeMarkdownInput,
   sanitizeBaseName,
   assertInsideDir,
+  isSystemOrRestrictedPath,
   exportPlan,
 } from '../src/exporter.js';
 import { sanitizeErrorMessage } from '../src/index.js';
@@ -18,9 +19,17 @@ describe('Security & Input Validation Tests', () => {
       );
     });
 
-    it('should reject path traversal attempts escaping the workspace', () => {
+    it('should reject access to user credential files like .ssh or .env', () => {
       assert.throws(
-        () => resolveSafeMarkdownInput('../../outside.md'),
+        () => resolveSafeMarkdownInput('~/.ssh/id_rsa'),
+        /Security Exception/
+      );
+      assert.throws(
+        () => resolveSafeMarkdownInput('.env'),
+        /Security Exception/
+      );
+      assert.throws(
+        () => resolveSafeMarkdownInput('./config/.env.production'),
         /Security Exception/
       );
     });
@@ -32,18 +41,30 @@ describe('Security & Input Validation Tests', () => {
       );
     });
 
-    it('should reject disallowed file extensions', () => {
+    it('should reject disallowed file extensions for existing files', () => {
       assert.throws(
         () => resolveSafeMarkdownInput('package.json'),
         /Invalid file extension/
       );
     });
 
-    it('should accept and load valid markdown files within workspace', () => {
-      const result = resolveSafeMarkdownInput('sample-plan.md');
-      assert.ok(result.content.length > 0);
-      assert.ok(result.content.includes('# Agent Implementation Plan'));
-      assert.equal(result.derivedName, 'sample-plan');
+    it('should throw File not found for nonexistent .md files', () => {
+      assert.throws(
+        () => resolveSafeMarkdownInput('definitely-nonexistent-file.md'),
+        /File not found/
+      );
+    });
+
+    it('should accept and load valid markdown files within workspace (relative and absolute)', () => {
+      const relResult = resolveSafeMarkdownInput('sample-plan.md');
+      assert.ok(relResult.content.length > 0);
+      assert.ok(relResult.content.includes('# Agent Implementation Plan'));
+      assert.equal(relResult.derivedName, 'sample-plan');
+
+      const absPath = path.resolve('sample-plan.md');
+      const absResult = resolveSafeMarkdownInput(absPath);
+      assert.ok(absResult.content.length > 0);
+      assert.equal(absResult.derivedName, 'sample-plan');
     });
 
     it('should treat plain markdown text strings as raw content', () => {
@@ -51,6 +72,35 @@ describe('Security & Input Validation Tests', () => {
       const result = resolveSafeMarkdownInput(raw);
       assert.equal(result.content, raw);
       assert.equal(result.derivedName, undefined);
+    });
+
+    it('should treat single-line markdown text with slashes as raw content instead of crashing as file', () => {
+      const raw = '# Plan: Migration auth/billing to v2.0';
+      const result = resolveSafeMarkdownInput(raw);
+      assert.equal(result.content, raw);
+      assert.equal(result.derivedName, undefined);
+    });
+  });
+
+  describe('isSystemOrRestrictedPath', () => {
+    it('should detect Unix system directories', () => {
+      assert.equal(isSystemOrRestrictedPath('/etc'), true);
+      assert.equal(isSystemOrRestrictedPath('/etc/shadow'), true);
+      assert.equal(isSystemOrRestrictedPath('/proc/cpuinfo'), true);
+      assert.equal(isSystemOrRestrictedPath('/sys/class'), true);
+      assert.equal(isSystemOrRestrictedPath('/root/.bashrc'), true);
+    });
+
+    it('should detect credential directories and files', () => {
+      assert.equal(isSystemOrRestrictedPath('~/.ssh/id_rsa'), true);
+      assert.equal(isSystemOrRestrictedPath('/home/user/.aws/credentials'), true);
+      assert.equal(isSystemOrRestrictedPath('/home/user/project/.env'), true);
+      assert.equal(isSystemOrRestrictedPath('/home/user/project/.env.local'), true);
+    });
+
+    it('should allow normal workspace files and directories', () => {
+      assert.equal(isSystemOrRestrictedPath('./exports'), false);
+      assert.equal(isSystemOrRestrictedPath('/home/user/projects/my-app/docs/plan.md'), false);
     });
   });
 
@@ -81,29 +131,29 @@ describe('Security & Input Validation Tests', () => {
   });
 
   describe('outputDir validation in exportPlan', () => {
-    it('should reject absolute output directory paths', async () => {
+    it('should reject output directory paths pointing to system directories', async () => {
       await assert.rejects(
         async () => {
           await exportPlan({
             input: '# Test',
-            outputDir: '/tmp',
+            outputDir: '/etc/exports',
             formats: ['html'],
           });
         },
-        /Absolute path "\/tmp" is not permitted/
+        /Security Exception/
       );
     });
 
-    it('should reject output directory paths escaping the workspace', async () => {
+    it('should reject output directory paths pointing to credential folders', async () => {
       await assert.rejects(
         async () => {
           await exportPlan({
             input: '# Test',
-            outputDir: '../outside-workspace',
+            outputDir: '~/.ssh',
             formats: ['html'],
           });
         },
-        /escapes the project workspace/
+        /Security Exception/
       );
     });
 
@@ -118,6 +168,19 @@ describe('Security & Input Validation Tests', () => {
         },
         /Null bytes are not permitted/
       );
+    });
+
+    it('should allow safe relative and absolute output directories', async () => {
+      const absOutputDir = path.resolve('./exports');
+      const results = await exportPlan({
+        input: '# Test Safe Output',
+        outputDir: absOutputDir,
+        outputName: 'test-safe-output',
+        formats: ['html'],
+      });
+      assert.equal(results.length, 1);
+      assert.equal(results[0].format, 'html');
+      assert.ok(results[0].path.endsWith('test-safe-output.html'));
     });
   });
 

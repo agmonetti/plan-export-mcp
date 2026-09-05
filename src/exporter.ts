@@ -22,56 +22,127 @@ const COMMON_CHROME_PATHS: string[] = [
   'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
 ];
 
+import os from 'os';
+
 const MAX_INPUT_BYTES = 10 * 1024 * 1024; // 10MB limit
 const ALLOWED_INPUT_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkd', '.txt']);
 
+export function expandHome(filePath: string): string {
+  if (filePath === '~' || filePath.startsWith('~/')) {
+    return path.join(os.homedir(), filePath.slice(1));
+  }
+  if (filePath.startsWith('~\\')) {
+    return path.join(os.homedir(), filePath.slice(2));
+  }
+  return filePath;
+}
+
+export function isSystemOrRestrictedPath(targetPath: string): boolean {
+  const expanded = expandHome(targetPath);
+  const normalized = path.normalize(path.resolve(expanded));
+  const lower = normalized.toLowerCase();
+
+  const parsed = path.parse(normalized);
+  if (normalized === parsed.root) {
+    return true;
+  }
+
+  // Linux / Unix system paths
+  const unixSystemPrefixes = ['/etc', '/proc', '/sys', '/dev', '/boot', '/root', '/run', '/var/run'];
+  for (const prefix of unixSystemPrefixes) {
+    if (lower === prefix || lower.startsWith(prefix + '/')) {
+      return true;
+    }
+  }
+
+  // Windows system paths
+  const winSystemPrefixes = ['c:\\windows', 'c:\\programdata'];
+  for (const prefix of winSystemPrefixes) {
+    if (lower === prefix || lower.startsWith(prefix + '\\')) {
+      return true;
+    }
+  }
+
+  // Sensitive user credential directories and files
+  const parts = lower.split(/[/\\]/);
+  const sensitiveSegments = new Set([
+    '.ssh',
+    '.aws',
+    '.gnupg',
+    '.kube',
+    '.docker',
+    '.netrc',
+    '.npmrc',
+    '.pypirc',
+  ]);
+  for (const part of parts) {
+    if (sensitiveSegments.has(part)) {
+      return true;
+    }
+    if (part === '.env' || part.startsWith('.env.')) {
+      return true;
+    }
+    if (part === 'id_rsa' || part === 'id_ed25519' || part === 'id_ecdsa' || part === 'id_dsa') {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function resolveSafeMarkdownInput(input: string): { content: string; derivedName?: string } {
-  if (typeof input === 'string' && input.length < 4096 && !input.includes('\n')) {
+  // If input contains newlines, it is definitely raw markdown content, not a filesystem path
+  if (typeof input === 'string' && input.includes('\n')) {
+    if (Buffer.byteLength(input, 'utf-8') > MAX_INPUT_BYTES) {
+      throw new Error(`Markdown input exceeds maximum allowed size of 10MB.`);
+    }
+    return { content: input };
+  }
+
+  if (typeof input === 'string' && input.length < 4096) {
     const trimmed = input.trim();
     if (trimmed.includes('\0')) {
       throw new Error('Security Exception: Null bytes are not permitted in path input.');
     }
 
+    const ext = path.extname(trimmed).toLowerCase();
+    const isExplicitFileExt = ALLOWED_INPUT_EXTENSIONS.has(ext);
+
     const cwd = path.resolve(process.cwd());
-    if (cwd === path.parse(cwd).root) {
-      throw new Error('Security Exception: Operating directly at filesystem root is not permitted.');
+    const expanded = expandHome(trimmed);
+    const candidatePath = path.isAbsolute(expanded)
+      ? path.normalize(expanded)
+      : path.resolve(cwd, expanded);
+
+    const fileExists = fs.existsSync(candidatePath);
+    const hasPathIndicator =
+      trimmed.startsWith('~') ||
+      trimmed.startsWith('.') ||
+      trimmed.startsWith('/') ||
+      trimmed.startsWith('\\') ||
+      /^[a-zA-Z]:[/\\]/.test(trimmed) ||
+      isExplicitFileExt;
+
+    // Eagerly reject any attempt to target restricted system or credential paths
+    if (isSystemOrRestrictedPath(candidatePath) && (hasPathIndicator || fileExists)) {
+      throw new Error(
+        `Security Exception: Access denied. Cannot access restricted system or credential path: "${trimmed}".`
+      );
     }
 
-    const hasPathSeparator = trimmed.includes('/') || trimmed.includes('\\');
-    const ext = path.extname(trimmed).toLowerCase();
-    const candidatePath = path.isAbsolute(trimmed)
-      ? path.resolve(trimmed)
-      : path.resolve(cwd, trimmed);
-
-    const isPath =
-      trimmed.startsWith('.') ||
-      hasPathSeparator ||
-      ALLOWED_INPUT_EXTENSIONS.has(ext) ||
-      (ext !== '' && !trimmed.includes(' ') && fs.existsSync(candidatePath));
+    // Only treat input as path if:
+    // 1) It has an allowed explicit markdown/text file extension (.md, .txt, etc.)
+    // OR 2) It actually exists on disk as a file or directory
+    const isPath = isExplicitFileExt || fileExists;
 
     if (isPath) {
       const resolvedPath = candidatePath;
 
-      const rel = path.relative(cwd, resolvedPath);
-      if (rel.startsWith('..') || path.isAbsolute(rel) || resolvedPath === cwd) {
-        throw new Error(
-          `Security Exception: Access denied. Cannot read file outside the project workspace: "${trimmed}".`
-        );
-      }
-
-      const fileExt = path.extname(resolvedPath).toLowerCase();
-      if (!ALLOWED_INPUT_EXTENSIONS.has(fileExt)) {
-        throw new Error(
-          `Security Exception: Invalid file extension "${fileExt}". Only Markdown and text files (.md, .markdown, .txt) are permitted.`
-        );
-      }
-
-      if (fs.existsSync(resolvedPath)) {
+      if (fileExists) {
         const realPath = fs.realpathSync(resolvedPath);
-        const realRel = path.relative(cwd, realPath);
-        if (realRel.startsWith('..') || path.isAbsolute(realRel)) {
+        if (isSystemOrRestrictedPath(realPath)) {
           throw new Error(
-            `Security Exception: Access denied. Target file or symlink resolves outside the project workspace.`
+            `Security Exception: Access denied. Target file or symlink resolves to a restricted path.`
           );
         }
 
@@ -79,15 +150,21 @@ export function resolveSafeMarkdownInput(input: string): { content: string; deri
         if (!stat.isFile()) {
           throw new Error(`Invalid input: Path is not a regular file: "${trimmed}".`);
         }
+        const fileExt = path.extname(realPath).toLowerCase();
+        if (!ALLOWED_INPUT_EXTENSIONS.has(fileExt)) {
+          throw new Error(
+            `Security Exception: Invalid file extension "${fileExt}". Only Markdown and text files (.md, .markdown, .txt) are permitted.`
+          );
+        }
         if (stat.size > MAX_INPUT_BYTES) {
           throw new Error(`Input file exceeds maximum allowed size of 10MB: "${trimmed}".`);
         }
         return {
           content: fs.readFileSync(realPath, 'utf-8'),
-          derivedName: path.basename(resolvedPath, fileExt),
+          derivedName: path.basename(resolvedPath, path.extname(resolvedPath)),
         };
-      } else {
-        throw new Error(`File not found within workspace: "${trimmed}".`);
+      } else if (isExplicitFileExt) {
+        throw new Error(`File not found: "${trimmed}".`);
       }
     }
   }
@@ -252,27 +329,31 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
     const { content: markdownContent, derivedName } = resolveSafeMarkdownInput(input);
     const safeBaseName = sanitizeBaseName(outputName || derivedName || `plan-${Date.now()}`);
 
-    // Validate outputDir to prevent workspace escape and arbitrary directory creation
+    // Validate outputDir: allow relative and safe absolute paths, block system and credential paths
     const trimmedOutputDir = outputDir.trim();
     if (trimmedOutputDir.includes('\0')) {
       throw new Error('Security Exception: Null bytes are not permitted in output directory.');
     }
-    if (path.isAbsolute(trimmedOutputDir)) {
-      throw new Error(
-        `Security Exception: Absolute path "${trimmedOutputDir}" is not permitted for outputDir. Use a path relative to the workspace.`
-      );
-    }
     const cwd = path.resolve(process.cwd());
-    const resolvedOutputDir = path.resolve(cwd, trimmedOutputDir);
-    const relOut = path.relative(cwd, resolvedOutputDir);
-    if (relOut.startsWith('..') || path.isAbsolute(relOut)) {
+    const expandedOut = expandHome(trimmedOutputDir);
+    const resolvedOutputDir = path.isAbsolute(expandedOut)
+      ? path.normalize(expandedOut)
+      : path.resolve(cwd, expandedOut);
+
+    if (isSystemOrRestrictedPath(resolvedOutputDir)) {
       throw new Error(
-        `Security Exception: Target output directory "${trimmedOutputDir}" escapes the project workspace.`
+        `Security Exception: Access denied. Target output directory "${trimmedOutputDir}" is a restricted system or credential path.`
       );
     }
 
-    // Ensure output directory exists
-    if (!fs.existsSync(resolvedOutputDir)) {
+    if (fs.existsSync(resolvedOutputDir)) {
+      const realOutputDir = fs.realpathSync(resolvedOutputDir);
+      if (isSystemOrRestrictedPath(realOutputDir)) {
+        throw new Error(
+          `Security Exception: Access denied. Target output directory resolves to a restricted system path.`
+        );
+      }
+    } else {
       fs.mkdirSync(resolvedOutputDir, { recursive: true });
     }
 
