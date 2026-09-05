@@ -507,7 +507,7 @@ export interface RenderOptions {
 
 export async function renderMarkdownToHtml(
   markdown: string,
-  theme: Theme = 'dark',
+  theme: Theme = CONFIG.defaults.theme,
   options: RenderOptions = {}
 ): Promise<string> {
   const highlighter = await getHighlighter();
@@ -641,7 +641,7 @@ export async function renderMarkdownToHtml(
  */
 export function renderDiagramToHtml(
   diagram: string,
-  theme: Theme = 'dark',
+  theme: Theme = CONFIG.defaults.theme,
   options: { standaloneHtml?: boolean } = {}
 ): string {
   const isDark = theme === 'dark';

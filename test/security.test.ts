@@ -343,7 +343,7 @@ describe('Security & Input Validation Tests', () => {
       assert.equal(CONFIG.limits.maxQueueSize, 20);
       assert.equal(CONFIG.timeouts.operationMs, 15000);
       assert.equal(CONFIG.timeouts.mermaidMs, 6000);
-      assert.equal(CONFIG.defaults.theme, 'dark');
+      assert.equal(CONFIG.defaults.theme, 'light');
       assert.deepEqual(CONFIG.defaults.formats, ['png', 'pdf']);
       assert.ok(CONFIG.allowedExtensions.has('.md'));
       assert.ok(CONFIG.commonChromePaths.length > 0);

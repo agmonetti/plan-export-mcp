@@ -13,7 +13,7 @@ export const CONFIG = {
   },
   defaults: {
     outputDir: './exports',
-    theme: 'dark' as const,
+    theme: 'light' as const,
     formats: ['png', 'pdf'] as const,
   },
   allowedExtensions: new Set(['.md', '.markdown', '.mdown', '.mkd', '.txt']),

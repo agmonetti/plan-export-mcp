@@ -37,7 +37,7 @@ const ExportPlanSchema = z.object({
   input: z
     .string({ message: 'The "input" parameter is required and must be a string.' })
     .min(1, 'The "input" parameter cannot be empty.'),
-  theme: z.enum(['dark', 'light']).default('dark'),
+  theme: z.enum(['dark', 'light']).default('light'),
   formats: z
     .array(z.enum(['pdf', 'png', 'html']))
     .min(1, 'At least one export format must be specified.')
@@ -50,7 +50,7 @@ const RenderDiagramSchema = z.object({
   diagram: z
     .string({ message: 'The "diagram" parameter is required and must be a string.' })
     .min(1, 'The "diagram" parameter cannot be empty.'),
-  theme: z.enum(['dark', 'light']).default('dark'),
+  theme: z.enum(['dark', 'light']).default('light'),
   format: z.enum(['png', 'svg']).default('png'),
   outputDir: z.string().default('./exports'),
   outputName: z.string().optional(),
@@ -125,7 +125,7 @@ export async function runMcpServer() {
               theme: {
                 type: 'string',
                 enum: ['dark', 'light'],
-                description: 'Visual theme: "dark" (GitHub Dark) or "light" (GitHub Light). Default: "dark"',
+                description: 'Visual theme: "light" (GitHub Light) or "dark" (GitHub Dark). Default: "light"',
               },
               formats: {
                 type: 'array',
@@ -163,7 +163,7 @@ export async function runMcpServer() {
               theme: {
                 type: 'string',
                 enum: ['dark', 'light'],
-                description: 'Visual theme: "dark" (GitHub Dark) or "light" (GitHub Light). Default: "dark"',
+                description: 'Visual theme: "light" (GitHub Light) or "dark" (GitHub Dark). Default: "light"',
               },
               format: {
                 type: 'string',
@@ -327,7 +327,7 @@ export async function runCli(args: string[]) {
     parsed = parseArgs({
       args,
       options: {
-        theme: { type: 'string', default: 'dark' },
+        theme: { type: 'string', default: 'light' },
         formats: { type: 'string', default: 'png,pdf' },
         'output-dir': { type: 'string', default: './exports' },
         'output-name': { type: 'string' },
@@ -353,7 +353,7 @@ Usage:
   npx plan-export-mcp                       Run as MCP stdio server
 
 Options:
-  --theme <dark|light>      Theme to use (default: dark)
+  --theme <light|dark>      Theme to use (default: light)
   --formats <formats>       Comma-separated formats: png,pdf,html (default: png,pdf)
   --output-dir <dir>        Output directory (default: ./exports)
   --output-name <name>      Base filename without extension
@@ -369,7 +369,7 @@ Options:
     return;
   }
 
-  let theme: Theme = 'dark';
+  let theme: Theme = 'light';
   if (values.theme) {
     const rawTheme = values.theme.toLowerCase();
     if (rawTheme === 'light' || rawTheme === 'dark') {

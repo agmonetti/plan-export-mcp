@@ -4,7 +4,7 @@ export type ExportFormat = 'pdf' | 'png' | 'html';
 export interface ExportPlanOptions {
   /** File path to markdown or raw markdown content */
   input: string;
-  /** Visual theme. Default: "dark" */
+  /** Visual theme. Default: "light" */
   theme?: Theme;
   /** Formats to export. Default: ["png", "pdf"] */
   formats?: ExportFormat[];
@@ -24,7 +24,7 @@ export type DiagramFormat = 'png' | 'svg';
 export interface RenderDiagramOptions {
   /** Mermaid diagram syntax definition */
   diagram: string;
-  /** Visual theme. Default: "dark" */
+  /** Visual theme. Default: "light" */
   theme?: Theme;
   /** Export format. Default: "png" */
   format?: DiagramFormat;
