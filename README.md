@@ -1,6 +1,7 @@
 # plan-export-mcp
 
-> **Export AI agent implementation plans and architectural audits into gorgeous, IDE-grade PDFs, high-res PNGs, and self-contained HTML files ready to share on WhatsApp, Slack, or Email.**
+> **The visual export engine for coding agents. Turn Markdown plans and Mermaid diagrams into beautiful, shareable documents.**
+
 
 ---
 
