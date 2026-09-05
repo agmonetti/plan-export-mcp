@@ -1,11 +1,14 @@
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import fs from 'node:fs';
 import {
   resolveSafeMarkdownInput,
   sanitizeBaseName,
   assertInsideDir,
   isSystemOrRestrictedPath,
+  resetBrowserIdleTimer,
+  closeBrowser,
   exportPlan,
 } from '../src/exporter.js';
 import { sanitizeErrorMessage } from '../src/index.js';
@@ -199,5 +202,33 @@ describe('Security & Input Validation Tests', () => {
       assert.ok(!sanitized.includes('john_doe'));
       assert.ok(sanitized.includes('/home/[user]/.ssh/id_rsa'));
     });
+  });
+
+  describe('Browser Idle Reaper & Lifecycle', () => {
+    it('should configure and reset idle timer without throwing', () => {
+      assert.doesNotThrow(() => {
+        resetBrowserIdleTimer();
+      });
+    });
+  });
+
+  after(async () => {
+    await closeBrowser();
+    // Clean up temporary test artifacts created in ./exports
+    const exportDir = path.resolve('./exports');
+    if (fs.existsSync(exportDir)) {
+      try {
+        const files = fs.readdirSync(exportDir);
+        for (const f of files) {
+          try {
+            fs.unlinkSync(path.join(exportDir, f));
+          } catch {
+            // ignore
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
   });
 });
