@@ -29,11 +29,26 @@ When coding agents (**Cursor**, **Claude Code**, **Pi**, **Windsurf**, **Aider**
 
 ---
 
-## Quickstart & Setup
+## Installation and Usage
 
-### 1. Claude Desktop Setup
+### Prerequisites
+- Node.js 18+
+- npm, pnpm, or yarn
+- Google Chrome or Chromium installed on the host system
 
-Add to your `claude_desktop_config.json`:
+---
+
+### 1. Run with NPX (Recommended)
+
+Runs on-demand without any global installation.
+
+#### Claude Code (One-liner CLI)
+```bash
+claude mcp add plan-export npx -y plan-export-mcp
+```
+
+#### Claude Desktop & Cursor (JSON Configuration)
+Add to your `claude_desktop_config.json` or `.cursor/mcp.json`:
 
 ```json
 {
@@ -46,22 +61,60 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
-### 2. Cursor Setup
+> **Tip (Linux/Docker)**: If Puppeteer cannot locate Chrome automatically, specify its path explicitly:
+> ```json
+> "env": {
+>   "PUPPETEER_EXECUTABLE_PATH": "/usr/bin/google-chrome-stable"
+> }
+> ```
 
-Add to `.cursor/mcp.json`:
+---
+
+### 2. Install Globally from NPM
+
+Ideal for instant startup without network latency on every invocation:
+
+```bash
+npm install -g plan-export-mcp
+```
 
 ```json
 {
   "mcpServers": {
     "plan-export": {
-      "command": "npx",
-      "args": ["-y", "plan-export-mcp"]
+      "command": "plan-export-mcp"
     }
   }
 }
 ```
 
-### 3. Standalone CLI Usage
+---
+
+### 3. Install from Source (Development)
+
+Clone the repository and build locally:
+
+```bash
+git clone https://github.com/agmonetti/plan-export-mcp.git
+cd plan-export-mcp
+npm install
+npm run build
+```
+
+```json
+{
+  "mcpServers": {
+    "plan-export": {
+      "command": "node",
+      "args": ["/path/to/plan-export-mcp/dist/index.js"]
+    }
+  }
+}
+```
+
+---
+
+### Standalone CLI Usage
 
 You can also run it directly in your terminal:
 
