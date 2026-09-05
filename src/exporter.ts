@@ -22,6 +22,21 @@ const COMMON_CHROME_PATHS: string[] = [
   'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
 ];
 
+const MAX_INPUT_BYTES = 10 * 1024 * 1024; // 10MB limit
+
+export function sanitizeBaseName(rawName: string): string {
+  const base = path.basename(rawName).trim();
+  const sanitized = base.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
+  return sanitized.replace(/^_+|_+$/g, '') || `plan-${Date.now()}`;
+}
+
+export function assertInsideDir(filePath: string, targetDir: string): void {
+  const relative = path.relative(targetDir, filePath);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(`Security Exception: Target path "${filePath}" attempts to escape output directory "${targetDir}".`);
+  }
+}
+
 export function resolveExecutablePath(): string | undefined {
   if (process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
     return process.env.PUPPETEER_EXECUTABLE_PATH;
@@ -101,9 +116,12 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
   let baseName = outputName;
 
   // Check if input is a file path
-  if (fs.existsSync(input)) {
+  if (typeof input === 'string' && input.length < 4096 && fs.existsSync(input)) {
     const stat = fs.statSync(input);
     if (stat.isFile()) {
+      if (stat.size > MAX_INPUT_BYTES) {
+        throw new Error(`Input file exceeds maximum allowed size of 10MB: ${input}`);
+      }
       markdownContent = fs.readFileSync(input, 'utf-8');
       if (!baseName) {
         baseName = path.basename(input, path.extname(input));
@@ -111,9 +129,11 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
     }
   }
 
-  if (!baseName) {
-    baseName = `plan-${Date.now()}`;
+  if (Buffer.byteLength(markdownContent, 'utf-8') > MAX_INPUT_BYTES) {
+    throw new Error(`Markdown input exceeds maximum allowed size of 10MB.`);
   }
+
+  const safeBaseName = sanitizeBaseName(baseName || `plan-${Date.now()}`);
 
   // Ensure output directory exists
   const resolvedOutputDir = path.resolve(process.cwd(), outputDir);
@@ -127,7 +147,8 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
 
   // Format: HTML
   if (formats.includes('html')) {
-    const htmlPath = path.join(resolvedOutputDir, `${baseName}.html`);
+    const htmlPath = path.join(resolvedOutputDir, `${safeBaseName}.html`);
+    assertInsideDir(htmlPath, resolvedOutputDir);
     fs.writeFileSync(htmlPath, fullHtml, 'utf-8');
     results.push({ format: 'html', path: htmlPath });
   }
@@ -161,7 +182,8 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
 
     // Format: PNG
     if (formats.includes('png')) {
-      const pngPath = path.join(resolvedOutputDir, `${baseName}.png`);
+      const pngPath = path.join(resolvedOutputDir, `${safeBaseName}.png`);
+      assertInsideDir(pngPath, resolvedOutputDir);
       await page.screenshot({
         path: pngPath,
         fullPage: true,
@@ -172,7 +194,8 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
 
     // Format: PDF
     if (formats.includes('pdf')) {
-      const pdfPath = path.join(resolvedOutputDir, `${baseName}.pdf`);
+      const pdfPath = path.join(resolvedOutputDir, `${safeBaseName}.pdf`);
+      assertInsideDir(pdfPath, resolvedOutputDir);
       await page.emulateMediaType('print');
       await page.pdf({
         path: pdfPath,
