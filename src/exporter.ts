@@ -320,6 +320,52 @@ function releaseExportSlot(): void {
   }
 }
 
+const BASE_BROWSER_ARGS: string[] = [
+  '--disable-dev-shm-usage',
+  '--disable-gpu',
+  '--no-zygote',
+  '--font-render-hinting=none',
+  '--disable-background-networking',
+  '--disable-default-apps',
+  '--disable-sync',
+  '--disable-extensions',
+];
+
+export async function launchChromiumWithFallback(executablePath?: string): Promise<Browser> {
+  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  const forceNoSandbox = isRoot || process.env.PLAN_EXPORT_NO_SANDBOX === 'true';
+
+  if (!forceNoSandbox) {
+    try {
+      return await puppeteer.launch({
+        executablePath,
+        headless: true,
+        args: BASE_BROWSER_ARGS,
+      });
+    } catch (err: any) {
+      const errMsg = err?.message || String(err);
+      const isSandboxIssue =
+        errMsg.includes('sandbox') ||
+        errMsg.includes('setuid') ||
+        errMsg.includes('namespace') ||
+        errMsg.includes('zygote');
+
+      if (!isSandboxIssue) {
+        throw err;
+      }
+      process.stderr.write(
+        '[plan-export-mcp] Notice: Chromium sandbox is unavailable in current environment; falling back to un-sandboxed mode.\n'
+      );
+    }
+  }
+
+  return puppeteer.launch({
+    executablePath,
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', ...BASE_BROWSER_ARGS],
+  });
+}
+
 export async function getBrowser(): Promise<Browser> {
   if (sharedBrowser && sharedBrowser.connected) {
     try {
@@ -335,22 +381,7 @@ export async function getBrowser(): Promise<Browser> {
   const executablePath = resolveExecutablePath();
 
   try {
-    const launchPromise = puppeteer.launch({
-      executablePath,
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-zygote',
-        '--font-render-hinting=none',
-        '--disable-background-networking',
-        '--disable-default-apps',
-        '--disable-sync',
-        '--disable-extensions',
-      ],
-    });
+    const launchPromise = launchChromiumWithFallback(executablePath);
 
     const timeoutPromise = new Promise<never>((_, reject) => {
       const t = setTimeout(() => {
