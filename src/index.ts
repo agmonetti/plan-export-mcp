@@ -12,7 +12,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { parseArgs } from 'node:util';
-import { exportPlan, closeBrowser } from './exporter.js';
+import { exportPlan, renderDiagram, closeBrowser } from './exporter.js';
 import type { ExportPlanOptions, ExportFormat, Theme } from './types.js';
 import { z } from 'zod';
 import { performGracefulShutdown, setupShutdownHandlers, gracefulExit } from './shutdown.js';
@@ -44,6 +44,20 @@ const ExportPlanSchema = z.object({
     .default(['png', 'pdf']),
   outputDir: z.string().default('./exports'),
   outputName: z.string().optional(),
+});
+
+const RenderDiagramSchema = z.object({
+  diagram: z
+    .string({ message: 'The "diagram" parameter is required and must be a string.' })
+    .min(1, 'The "diagram" parameter cannot be empty.'),
+  theme: z.enum(['dark', 'light']).default('dark'),
+  format: z.enum(['png', 'svg']).default('png'),
+  outputDir: z.string().default('./exports'),
+  outputName: z.string().optional(),
+  includeBase64: z
+    .boolean()
+    .default(true)
+    .describe('If true, returns base64 image data in MCP response for direct chat preview.'),
 });
 
 export function sanitizeErrorMessage(err: unknown): string {
@@ -134,11 +148,114 @@ export async function runMcpServer() {
             required: ['input'],
           },
         },
+        {
+          name: 'render_diagram',
+          description:
+            'Render an isolated Mermaid diagram (sequence, flowchart, class, architecture, ER) directly to a cropped PNG or SVG file with optional visual preview in chat.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              diagram: {
+                type: 'string',
+                description:
+                  'Raw Mermaid diagram definition code (e.g. "graph TD\\nA-->B" or "sequenceDiagram...")',
+              },
+              theme: {
+                type: 'string',
+                enum: ['dark', 'light'],
+                description: 'Visual theme: "dark" (GitHub Dark) or "light" (GitHub Light). Default: "dark"',
+              },
+              format: {
+                type: 'string',
+                enum: ['png', 'svg'],
+                description: 'Output format: "png" (high-res auto-cropped image) or "svg" (vector XML). Default: "png"',
+              },
+              outputDir: {
+                type: 'string',
+                description: 'Directory where exported diagram file will be saved. Default: "./exports"',
+              },
+              outputName: {
+                type: 'string',
+                description: 'Base filename for the diagram without extension. Default: "diagram-<timestamp>"',
+              },
+              includeBase64: {
+                type: 'boolean',
+                description:
+                  'Whether to include base64 image data in MCP response for direct visual rendering in chat. Default: true',
+              },
+            },
+            required: ['diagram'],
+          },
+        },
       ],
     };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    if (request.params.name === 'render_diagram') {
+      const parseResult = RenderDiagramSchema.safeParse(request.params.arguments || {});
+      if (!parseResult.success) {
+        const errorMsg = parseResult.error.issues.map((i) => i.message).join('; ');
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text: `Invalid parameters: ${errorMsg}`,
+            },
+          ],
+        };
+      }
+
+      const { diagram, theme, format, outputDir, outputName, includeBase64 } = parseResult.data;
+
+      try {
+        const result = await renderDiagram({
+          diagram,
+          theme,
+          format,
+          outputDir,
+          outputName,
+          includeBase64,
+        });
+
+        const content: Array<
+          | { type: 'text'; text: string }
+          | { type: 'image'; data: string; mimeType: string }
+        > = [
+          {
+            type: 'text',
+            text: `Diagram rendered successfully (${theme} theme):\n- **${result.format.toUpperCase()}**: \`${result.path}\``,
+          },
+        ];
+
+        if (result.format === 'png' && result.base64) {
+          content.push({
+            type: 'image',
+            data: result.base64,
+            mimeType: 'image/png',
+          });
+        } else if (result.format === 'svg' && result.svgContent) {
+          content.push({
+            type: 'text',
+            text: `\`\`\`xml\n${result.svgContent}\n\`\`\``,
+          });
+        }
+
+        return { content };
+      } catch (err: any) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text: `Failed to render diagram: ${sanitizeErrorMessage(err)}`,
+            },
+          ],
+        };
+      }
+    }
+
     if (request.params.name !== 'export_plan') {
       throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`);
     }
