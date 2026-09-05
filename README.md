@@ -9,21 +9,13 @@
 When coding agents (**Cursor**, **Claude Code**, **Pi**, **Windsurf**, **Aider**) draft implementation plans or audit codebases, they generate rich Markdown with code diffs, Mermaid architecture diagrams, GitHub callouts, and task lists.
 
 - **Inside your IDE:** It looks crisp and structured.
-- **When sharing:** Sending raw `.md` on **WhatsApp, Slack, or Email** turns into an unreadable mess. Generic PDF converters (`pandoc`, `markdown-pdf`) output 1990s-style plain black-and-white academic papers, break Mermaid diagrams, and strip dark themes.
+- **When sharing:** Sending raw `.md` on **WhatsApp, Slack, or Email** turns into an unreadable mess. Generic PDF converters output 1990s-style plain black-and-white academic papers, break Mermaid diagrams, and strip dark themes.
 
 `plan-export-mcp` bridges this gap. It gives your AI agent a native MCP tool to export plans with **pixel-perfect visual fidelity**.
 
 ---
 
-## Preview
 
-### Dark Theme (GitHub Dark / VS Code style)
-![Dark Theme Preview](assets/preview-dark.png)
-
-### Light Theme (GitHub Light style)
-![Light Theme Preview](assets/preview-light.png)
-
----
 
 ## Key Features
 
@@ -108,6 +100,11 @@ Your AI agent can invoke this tool directly:
 - **Headless Engine:** Puppeteer with intelligent fallback to system Chrome/Chromium.
 
 ---
+## Preview
+
+| Dark Theme (GitHub Dark / VS Code style) | Light Theme (GitHub Light style) |
+|:---:|:---:|
+| <img src="assets/preview-dark.png" width="235"> | <img src="assets/preview-light.png" width="250"> |
 
 ## License
 
