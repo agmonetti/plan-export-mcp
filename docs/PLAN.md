@@ -100,23 +100,23 @@ To ensure high visibility on GitHub, npm, and agent registries:
 
 ## 6. Milestones
 
-- [ ] **Milestone 1: Docs & Foundation**
+- [x] **Milestone 1: Docs & Foundation**
   - Translate and freeze `docs/PLAN.md` in English.
   - Create `docs/LESSONS.md` (documenting headless Chromium sandbox quirks, font rendering, Mermaid async rendering, and fallbacks).
   - Initialize project with `package.json`, `tsconfig.json`, and folder structure (`src/`).
-- [ ] **Milestone 2: Render Pipeline (Markdown -> Styled HTML)**
+- [x] **Milestone 2: Render Pipeline (Markdown -> Styled HTML)**
   - Implement Markdown-to-HTML parser with GFM task lists and GitHub callouts.
   - Integrate Shiki for code blocks with `dark` and `light` themes.
   - Integrate Mermaid rendering to inline SVG.
   - Produce self-contained HTML with inlined CSS and fonts.
-- [ ] **Milestone 3: Headless Exporter (HTML -> PDF / PNG)**
+- [x] **Milestone 3: Headless Exporter (HTML -> PDF / PNG)**
   - Integrate headless browser rendering.
   - Implement full-height PNG capture (2x DPR for crisp mobile preview).
   - Implement clean A4 PDF generation with pagination.
-- [ ] **Milestone 4: MCP Server Implementation**
+- [x] **Milestone 4: MCP Server Implementation**
   - Implement stdio MCP server exposing `export_plan`.
   - Validate end-to-end flow with a realistic agent plan sample.
-- [ ] **Milestone 5: Packaging & Open Source Launch**
+- [x] **Milestone 5: Packaging & Open Source Launch**
   - Configure CLI `bin` entrypoint for `npx plan-export-mcp`.
   - Add `smithery.yaml`.
   - Write high-converting README with visual "Before vs. After" side-by-side comparisons and setup guides for Cursor, Claude Code, and Windsurf.

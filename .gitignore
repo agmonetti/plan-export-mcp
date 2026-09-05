@@ -11,6 +11,10 @@ exports/
 *.png
 *.html
 
+# Allow assets
+!assets/*.png
+!assets/*.jpg
+
 # Logs
 npm-debug.log*
 yarn-debug.log*

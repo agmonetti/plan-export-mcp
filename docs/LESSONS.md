@@ -20,8 +20,13 @@ Exporting HTML to pixel-perfect PDF and high-res PNG requires a headless Chromiu
       '--font-render-hinting=none',
     ]
     ```
-- **Lifecycle & Resource Leaks:** Spawning a new browser process on every MCP request is slow (~1-2s overhead) and leaks zombie processes if unhandled.
-  - **Resolution:** Manage a lazy-initialized singleton browser instance or a scoped worker with proper `try...finally { await page.close(); }` cleanup and graceful shutdown on `SIGINT` / `SIGTERM`.
+- **System Chrome Fallback (ECONNRESET & Restricted Environments):**
+  Relying solely on Puppeteer's automatic ~170MB browser download during `npm install` frequently fails due to connection resets, corporative firewalls, or blocked postinstall scripts.
+  - **Resolution:** Implement intelligent browser path resolution:
+    1. `process.env.PUPPETEER_EXECUTABLE_PATH`
+    2. Cached Puppeteer Chrome binary (if present)
+    3. Common system installation paths (`/usr/bin/google-chrome-stable`, `/usr/bin/google-chrome`, `/usr/bin/chromium`, `/usr/bin/chromium-browser`, `/Applications/Google Chrome.app/...`)
+    This allows zero-friction execution when Chrome is already installed on the host machine.
 
 ---
 

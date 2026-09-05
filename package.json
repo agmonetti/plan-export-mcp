@@ -1,0 +1,47 @@
+{
+  "name": "plan-export-mcp",
+  "version": "0.1.0",
+  "description": "MCP server to export AI agent plans and architectural audits to beautiful PDFs, high-res PNGs, and self-contained HTML files.",
+  "type": "module",
+  "bin": {
+    "plan-export-mcp": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "agent-artifacts",
+    "plan-export",
+    "markdown-to-pdf",
+    "cursor",
+    "claude-code",
+    "windsurf"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "markdown-it": "^14.1.0",
+    "markdown-it-task-lists": "^2.1.1",
+    "mermaid": "^11.17.2",
+    "puppeteer": "^24.4.0",
+    "shiki": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^22.13.9",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
