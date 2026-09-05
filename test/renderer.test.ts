@@ -45,6 +45,14 @@ describe('Markdown & HTML Renderer Tests', () => {
     assert.ok(html.includes('style="color:'));
   });
 
+  it('should escape malicious HTML in code block language identifier', async () => {
+    const maliciousCodeMd = '```<script>alert("lang")</script>\nconst x = 1;\n```';
+    const html = await renderMarkdownToHtml(maliciousCodeMd, 'dark');
+
+    assert.ok(!html.includes('<script>alert("lang")'), 'Should not contain raw script tag from lang');
+    assert.ok(html.includes('&lt;script&gt;alert('), 'Should escape HTML in language header');
+  });
+
   it('should render GitHub callouts with octicon SVGs', async () => {
     const calloutMd = '> [!NOTE]\n> Ensure backup is configured.\n\n> [!WARNING]\n> Service restart required.';
     const html = await renderMarkdownToHtml(calloutMd, 'dark');

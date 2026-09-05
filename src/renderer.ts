@@ -71,6 +71,15 @@ const SANITIZE_HTML_OPTIONS: sanitizeHtml.IOptions = {
   disallowedTagsMode: 'discard',
 };
 
+export function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -546,7 +555,7 @@ export async function renderMarkdownToHtml(
       lang: safeLang,
       theme: shikiTheme,
     });
-    const displayLang = lang || 'code';
+    const displayLang = escapeHtml(lang || 'code');
 
     return `<div class="code-card"><div class="code-card-header"><span>${displayLang}</span></div>${highlightedCode}</div>\n`;
   };
