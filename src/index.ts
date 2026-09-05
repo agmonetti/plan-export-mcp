@@ -18,9 +18,17 @@ import { z } from 'zod';
 import { performGracefulShutdown, setupShutdownHandlers, gracefulExit } from './shutdown.js';
 
 // Public API Re-exports
-export type { ExportPlanOptions, ExportResult, Theme, ExportFormat } from './types.js';
+export type {
+  ExportPlanOptions,
+  ExportResult,
+  Theme,
+  ExportFormat,
+  DiagramFormat,
+  RenderDiagramOptions,
+  RenderDiagramResult,
+} from './types.js';
 export { ExportService, defaultExportService, exportPlan, closeBrowser, getBrowser } from './exporter.js';
-export { renderMarkdownToHtml } from './renderer.js';
+export { renderMarkdownToHtml, renderDiagramToHtml } from './renderer.js';
 export { ExportError, SecurityError, BrowserError } from './errors.js';
 export { CONFIG } from './config.js';
 export { performGracefulShutdown, setupShutdownHandlers, gracefulExit } from './shutdown.js';

@@ -18,3 +18,27 @@ export interface ExportResult {
   format: ExportFormat;
   path: string;
 }
+
+export type DiagramFormat = 'png' | 'svg';
+
+export interface RenderDiagramOptions {
+  /** Mermaid diagram syntax definition */
+  diagram: string;
+  /** Visual theme. Default: "dark" */
+  theme?: Theme;
+  /** Export format. Default: "png" */
+  format?: DiagramFormat;
+  /** Target output directory. Default: "./exports" */
+  outputDir?: string;
+  /** Base filename without extension. Default: "diagram-<timestamp>" */
+  outputName?: string;
+  /** If true, returns base64 data for visual preview. Default: true */
+  includeBase64?: boolean;
+}
+
+export interface RenderDiagramResult {
+  format: DiagramFormat;
+  path: string;
+  base64?: string;
+  svgContent?: string;
+}

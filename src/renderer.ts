@@ -633,3 +633,99 @@ export async function renderMarkdownToHtml(
 </body>
 </html>`;
 }
+
+/**
+ * Renders a standalone Mermaid diagram inside a minimal, auto-centering HTML document.
+ * Includes local offline Mermaid bundle (or CDN when standaloneHtml is requested)
+ * and strict CSP headers.
+ */
+export function renderDiagramToHtml(
+  diagram: string,
+  theme: Theme = 'dark',
+  options: { standaloneHtml?: boolean } = {}
+): string {
+  const isDark = theme === 'dark';
+  const mermaidTheme = isDark ? 'dark' : 'default';
+  const bgColor = isDark ? '#0d1117' : '#ffffff';
+  const escapedDiagram = escapeHtml(diagram.trim());
+
+  let mermaidScriptTag = '';
+  const cdnTag = `<script src="https://cdn.jsdelivr.net/npm/mermaid@${CONFIG.mermaid.version}/dist/mermaid.min.js" integrity="${CONFIG.mermaid.sri}" crossorigin="anonymous"></script>`;
+  if (options.standaloneHtml) {
+    mermaidScriptTag = cdnTag;
+  } else {
+    const bundle = getMermaidBundle();
+    if (bundle) {
+      mermaidScriptTag = `<script>${bundle}</script>`;
+    } else {
+      mermaidScriptTag = cdnTag;
+    }
+  }
+
+  const scriptSrc = "'unsafe-inline' https://cdn.jsdelivr.net";
+  const csp = `default-src 'none'; style-src 'unsafe-inline'; script-src ${scriptSrc}; img-src data:; font-src data:;`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="${csp}">
+  <title>Diagram</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      padding: 32px;
+      background-color: ${bgColor};
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      min-width: 100vw;
+      min-height: 100vh;
+    }
+    .mermaid-standalone {
+      display: inline-block;
+      padding: 16px;
+      background-color: ${bgColor};
+      border-radius: 8px;
+    }
+    .mermaid {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="mermaid-standalone">
+    <div class="mermaid">${escapedDiagram}</div>
+  </div>
+  ${mermaidScriptTag}
+  <script>
+    if (window.mermaid) {
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: '${mermaidTheme}',
+        securityLevel: 'strict',
+        themeVariables: {
+          darkMode: ${isDark},
+          background: '${isDark ? '#161b22' : '#ffffff'}',
+          primaryColor: '${isDark ? '#21262d' : '#f6f8fa'}',
+          primaryTextColor: '${isDark ? '#c9d1d9' : '#1f2328'}',
+          primaryBorderColor: '${isDark ? '#30363d' : '#d0d7de'}',
+          lineColor: '${isDark ? '#8b949e' : '#57606a'}',
+          secondaryColor: '${isDark ? '#1f6feb' : '#0969da'}',
+          tertiaryColor: '${isDark ? '#161b22' : '#f6f8fa'}'
+        }
+      });
+      mermaid.run();
+    }
+  </script>
+</body>
+</html>`;
+}
+
