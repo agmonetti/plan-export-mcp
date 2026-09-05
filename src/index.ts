@@ -47,11 +47,27 @@ export function sanitizeErrorMessage(err: unknown): string {
   return sanitized;
 }
 
+export function getPackageVersion(): string {
+  try {
+    const pkgPath = fileURLToPath(new URL('../package.json', import.meta.url));
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+      if (pkg && typeof pkg.version === 'string') {
+        return pkg.version;
+      }
+    }
+  } catch {
+    // fallback
+  }
+  return '0.1.0';
+}
+
 export async function runMcpServer() {
+  const version = getPackageVersion();
   const server = new Server(
     {
       name: 'plan-export-mcp',
-      version: '0.1.0',
+      version,
     },
     {
       capabilities: {
@@ -199,8 +215,9 @@ export async function runCli(args: string[]) {
   const { values, positionals } = parsed;
 
   if (values.help) {
+    const v = getPackageVersion();
     console.log(`
-plan-export-mcp v0.1.0
+plan-export-mcp v${v}
 
 Usage:
   npx plan-export-mcp <file.md> [options]    Run as CLI

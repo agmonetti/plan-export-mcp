@@ -12,7 +12,7 @@ import {
   exportPlan,
   isAllowedBrowserUrl,
 } from '../src/exporter.js';
-import { sanitizeErrorMessage } from '../src/index.js';
+import { sanitizeErrorMessage, getPackageVersion } from '../src/index.js';
 
 describe('Security & Input Validation Tests', () => {
   describe('resolveSafeMarkdownInput', () => {
@@ -256,6 +256,15 @@ describe('Security & Input Validation Tests', () => {
       const sanitized = sanitizeErrorMessage(err);
       assert.ok(!sanitized.includes('john_doe'));
       assert.ok(sanitized.includes('/home/[user]/.ssh/id_rsa'));
+    });
+  });
+
+  describe('getPackageVersion', () => {
+    it('should dynamically load version from package.json', () => {
+      const version = getPackageVersion();
+      assert.match(version, /^\d+\.\d+\.\d+/);
+      const pkg = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf-8'));
+      assert.equal(version, pkg.version);
     });
   });
 
