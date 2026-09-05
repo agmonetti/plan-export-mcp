@@ -113,7 +113,15 @@ export async function runMcpServer() {
     const parseResult = ExportPlanSchema.safeParse(request.params.arguments || {});
     if (!parseResult.success) {
       const errorMsg = parseResult.error.issues.map((i) => i.message).join('; ');
-      throw new McpError(ErrorCode.InvalidParams, `Invalid parameters: ${errorMsg}`);
+      return {
+        isError: true,
+        content: [
+          {
+            type: 'text',
+            text: `Invalid parameters: ${errorMsg}`,
+          },
+        ],
+      };
     }
 
     const { input, theme, formats, outputDir, outputName } = parseResult.data;
@@ -151,6 +159,21 @@ export async function runMcpServer() {
   });
 
   const transport = new StdioServerTransport();
+
+  const handleDisconnect = async () => {
+    try {
+      await closeBrowser();
+      await server.close();
+    } catch {
+      // ignore
+    } finally {
+      process.exit(0);
+    }
+  };
+
+  process.stdin.on('end', handleDisconnect);
+  process.stdin.on('close', handleDisconnect);
+
   await server.connect(transport);
 }
 

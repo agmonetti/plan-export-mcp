@@ -219,14 +219,38 @@ export function resolveExecutablePath(): string | undefined {
 
 const OPERATION_TIMEOUT_MS = 15000;
 const MERMAID_TIMEOUT_MS = 6000;
+const BROWSER_LAUNCH_TIMEOUT_MS = 15000;
+const BROWSER_IDLE_TIMEOUT_MS = 60000; // Auto-close Chromium after 60s idle to free RAM
 
 // Concurrency control: limit simultaneous browser export tasks to prevent RAM exhaustion
 const MAX_CONCURRENT_EXPORTS = 2;
 const MAX_QUEUE_SIZE = 20;
 let activeExports = 0;
 const waitQueue: Array<() => void> = [];
+let browserIdleTimer: NodeJS.Timeout | null = null;
+
+export function resetBrowserIdleTimer(): void {
+  if (browserIdleTimer) {
+    clearTimeout(browserIdleTimer);
+    browserIdleTimer = null;
+  }
+  if (sharedBrowser && activeExports === 0) {
+    browserIdleTimer = setTimeout(() => {
+      if (activeExports === 0 && sharedBrowser) {
+        closeBrowser().catch(() => {});
+      }
+    }, BROWSER_IDLE_TIMEOUT_MS);
+    if (browserIdleTimer && typeof browserIdleTimer.unref === 'function') {
+      browserIdleTimer.unref();
+    }
+  }
+}
 
 async function acquireExportSlot(): Promise<void> {
+  if (browserIdleTimer) {
+    clearTimeout(browserIdleTimer);
+    browserIdleTimer = null;
+  }
   if (activeExports < MAX_CONCURRENT_EXPORTS) {
     activeExports++;
     return;
@@ -249,6 +273,8 @@ function releaseExportSlot(): void {
   if (waitQueue.length > 0 && activeExports < MAX_CONCURRENT_EXPORTS) {
     const next = waitQueue.shift();
     if (next) next();
+  } else if (activeExports === 0) {
+    resetBrowserIdleTimer();
   }
 }
 
@@ -267,13 +293,15 @@ export async function getBrowser(): Promise<Browser> {
   const executablePath = resolveExecutablePath();
 
   try {
-    sharedBrowser = await puppeteer.launch({
+    const launchPromise = puppeteer.launch({
       executablePath,
       headless: true,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-zygote',
         '--font-render-hinting=none',
         '--disable-background-networking',
         '--disable-default-apps',
@@ -281,6 +309,16 @@ export async function getBrowser(): Promise<Browser> {
         '--disable-extensions',
       ],
     });
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      const t = setTimeout(() => {
+        reject(new Error(`Timed out after ${BROWSER_LAUNCH_TIMEOUT_MS / 1000}s attempting to launch headless browser.`));
+      }, BROWSER_LAUNCH_TIMEOUT_MS);
+      if (typeof t.unref === 'function') t.unref();
+    });
+
+    sharedBrowser = await Promise.race([launchPromise, timeoutPromise]);
+    resetBrowserIdleTimer();
     return sharedBrowser;
   } catch (err: any) {
     throw new Error(
@@ -293,6 +331,10 @@ export async function getBrowser(): Promise<Browser> {
 }
 
 export async function closeBrowser(): Promise<void> {
+  if (browserIdleTimer) {
+    clearTimeout(browserIdleTimer);
+    browserIdleTimer = null;
+  }
   if (sharedBrowser) {
     try {
       await sharedBrowser.close();
