@@ -60,6 +60,9 @@ export function resolveExecutablePath(): string | undefined {
   return undefined;
 }
 
+const OPERATION_TIMEOUT_MS = 15000;
+const MERMAID_TIMEOUT_MS = 6000;
+
 export async function getBrowser(): Promise<Browser> {
   if (sharedBrowser && sharedBrowser.connected) {
     return sharedBrowser;
@@ -75,6 +78,10 @@ export async function getBrowser(): Promise<Browser> {
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--font-render-hinting=none',
+      '--disable-background-networking',
+      '--disable-default-apps',
+      '--disable-sync',
+      '--disable-extensions',
     ],
   });
 
@@ -162,9 +169,57 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
   const page = await browser.newPage();
 
   try {
+    // Network isolation & anti-SSRF request interception
+    await page.setRequestInterception(true);
+    page.on('request', (req) => {
+      const urlStr = req.url();
+
+      // Allow safe internal data/blob protocols and initial document
+      if (urlStr.startsWith('data:') || urlStr.startsWith('blob:') || urlStr === 'about:blank') {
+        req.continue();
+        return;
+      }
+
+      // Allow official Mermaid CDN only if needed
+      if (urlStr.startsWith('https://cdn.jsdelivr.net/npm/mermaid@')) {
+        req.continue();
+        return;
+      }
+
+      // Block local filesystem access and private IP ranges (SSRF)
+      try {
+        const parsed = new URL(urlStr);
+        const hostname = parsed.hostname.toLowerCase();
+
+        const isPrivateOrLoopback =
+          parsed.protocol === 'file:' ||
+          hostname === 'localhost' ||
+          hostname === '127.0.0.1' ||
+          hostname === '0.0.0.0' ||
+          hostname === '169.254.169.254' ||
+          /^10\./.test(hostname) ||
+          /^192\.168\./.test(hostname) ||
+          /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname);
+
+        if (isPrivateOrLoopback) {
+          req.abort('accessdenied');
+          return;
+        }
+      } catch {
+        req.abort('accessdenied');
+        return;
+      }
+
+      // Block all other unauthorized external requests
+      req.abort('blockedbyclient');
+    });
+
+    // Defensive default timeout for all page operations
+    page.setDefaultTimeout(OPERATION_TIMEOUT_MS);
+
     // 2x Retina DPR for crisp, high-density display
     await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 2 });
-    await page.setContent(fullHtml, { waitUntil: 'load' });
+    await page.setContent(fullHtml, { waitUntil: 'load', timeout: OPERATION_TIMEOUT_MS });
 
     // Wait for Mermaid diagrams if present
     await page
@@ -174,7 +229,7 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
           if (diagrams.length === 0) return true;
           return Array.from(diagrams).every((d) => d.querySelector('svg'));
         },
-        { timeout: 8000 }
+        { timeout: MERMAID_TIMEOUT_MS }
       )
       .catch(() => {
         // Fallback: proceed if mermaid takes too long or isn't present
