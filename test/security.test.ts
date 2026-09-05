@@ -12,7 +12,13 @@ import {
   exportPlan,
   isAllowedBrowserUrl,
 } from '../src/exporter.js';
-import { sanitizeErrorMessage, getPackageVersion } from '../src/index.js';
+import {
+  sanitizeErrorMessage,
+  getPackageVersion,
+  ExportError,
+  SecurityError,
+  BrowserError,
+} from '../src/index.js';
 
 describe('Security & Input Validation Tests', () => {
   describe('resolveSafeMarkdownInput', () => {
@@ -299,6 +305,33 @@ describe('Security & Input Validation Tests', () => {
       assert.equal(isAllowedBrowserUrl('https://cdn.jsdelivr.net@127.0.0.1/npm/mermaid@11'), false);
       assert.equal(isAllowedBrowserUrl('http://cdn.jsdelivr.net/npm/mermaid@11'), false);
       assert.equal(isAllowedBrowserUrl('https://cdn.jsdelivr.net:8443/npm/mermaid@11'), false);
+    });
+  });
+
+  describe('Typed Error Hierarchy', () => {
+    it('should instantiate SecurityError and inherit from ExportError and Error', () => {
+      const err = new SecurityError('Access denied', 'ACCESS_DENIED');
+      assert.equal(err.name, 'SecurityError');
+      assert.equal(err.code, 'ACCESS_DENIED');
+      assert.ok(err instanceof SecurityError);
+      assert.ok(err instanceof ExportError);
+      assert.ok(err instanceof Error);
+    });
+
+    it('should instantiate BrowserError and inherit from ExportError and Error', () => {
+      const err = new BrowserError('Chrome crashed', 'CHROME_CRASH');
+      assert.equal(err.name, 'BrowserError');
+      assert.equal(err.code, 'CHROME_CRASH');
+      assert.ok(err instanceof BrowserError);
+      assert.ok(err instanceof ExportError);
+      assert.ok(err instanceof Error);
+    });
+
+    it('should throw typed SecurityError on restricted path input', () => {
+      assert.throws(
+        () => resolveSafeMarkdownInput('/etc/shadow'),
+        (err: any) => err instanceof SecurityError && err.code === 'RESTRICTED_PATH'
+      );
     });
   });
 

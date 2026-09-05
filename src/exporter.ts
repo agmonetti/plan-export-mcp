@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { renderMarkdownToHtml } from './renderer.js';
 import type { ExportPlanOptions, ExportResult, Theme, ExportFormat } from './types.js';
+import { ExportError, SecurityError, BrowserError } from './errors.js';
 
 let sharedBrowser: Browser | null = null;
 
@@ -94,7 +95,7 @@ export function resolveSafeMarkdownInput(input: string): { content: string; deri
   // If input contains newlines, it is definitely raw markdown content, not a filesystem path
   if (typeof input === 'string' && input.includes('\n')) {
     if (Buffer.byteLength(input, 'utf-8') > MAX_INPUT_BYTES) {
-      throw new Error(`Markdown input exceeds maximum allowed size of 10MB.`);
+      throw new ExportError(`Markdown input exceeds maximum allowed size of 10MB.`, 'INPUT_TOO_LARGE');
     }
     return { content: input };
   }
@@ -102,7 +103,7 @@ export function resolveSafeMarkdownInput(input: string): { content: string; deri
   if (typeof input === 'string' && input.length < 4096) {
     const trimmed = input.trim();
     if (trimmed.includes('\0')) {
-      throw new Error('Security Exception: Null bytes are not permitted in path input.');
+      throw new SecurityError('Security Exception: Null bytes are not permitted in path input.', 'NULL_BYTE');
     }
 
     const ext = path.extname(trimmed).toLowerCase();
@@ -124,8 +125,9 @@ export function resolveSafeMarkdownInput(input: string): { content: string; deri
 
     // Eagerly reject any attempt to target restricted system or credential paths
     if (isSystemOrRestrictedPath(candidatePath) && hasPathIndicator) {
-      throw new Error(
-        `Security Exception: Access denied. Cannot access restricted system or credential path: "${trimmed}".`
+      throw new SecurityError(
+        `Security Exception: Access denied. Cannot access restricted system or credential path: "${trimmed}".`,
+        'RESTRICTED_PATH'
       );
     }
 
@@ -135,15 +137,16 @@ export function resolveSafeMarkdownInput(input: string): { content: string; deri
     } catch {
       // Path does not exist
       if (isExplicitFileExt) {
-        throw new Error(`File not found: "${trimmed}".`);
+        throw new ExportError(`File not found: "${trimmed}".`, 'FILE_NOT_FOUND');
       }
     }
 
     if (realPath !== null) {
       // Eagerly verify resolved real path is not a restricted system or credential path
       if (isSystemOrRestrictedPath(realPath)) {
-        throw new Error(
-          `Security Exception: Access denied. Target file or symlink resolves to a restricted path.`
+        throw new SecurityError(
+          `Security Exception: Access denied. Target file or symlink resolves to a restricted path.`,
+          'RESTRICTED_PATH'
         );
       }
 
@@ -154,18 +157,19 @@ export function resolveSafeMarkdownInput(input: string): { content: string; deri
         const stat = fs.fstatSync(fd);
 
         if (!stat.isFile()) {
-          throw new Error(`Invalid input: Path is not a regular file: "${trimmed}".`);
+          throw new ExportError(`Invalid input: Path is not a regular file: "${trimmed}".`, 'NOT_A_FILE');
         }
 
         const fileExt = path.extname(realPath).toLowerCase();
         if (!ALLOWED_INPUT_EXTENSIONS.has(fileExt)) {
-          throw new Error(
-            `Security Exception: Invalid file extension "${fileExt}". Only Markdown and text files (.md, .markdown, .txt) are permitted.`
+          throw new SecurityError(
+            `Security Exception: Invalid file extension "${fileExt}". Only Markdown and text files (.md, .markdown, .txt) are permitted.`,
+            'INVALID_EXTENSION'
           );
         }
 
         if (stat.size > MAX_INPUT_BYTES) {
-          throw new Error(`Input file exceeds maximum allowed size of 10MB: "${trimmed}".`);
+          throw new ExportError(`Input file exceeds maximum allowed size of 10MB: "${trimmed}".`, 'INPUT_TOO_LARGE');
         }
 
         // Read content directly from open file descriptor
@@ -194,7 +198,7 @@ export function resolveSafeMarkdownInput(input: string): { content: string; deri
   }
 
   if (Buffer.byteLength(input, 'utf-8') > MAX_INPUT_BYTES) {
-    throw new Error(`Markdown input exceeds maximum allowed size of 10MB.`);
+    throw new ExportError(`Markdown input exceeds maximum allowed size of 10MB.`, 'INPUT_TOO_LARGE');
   }
 
   return { content: input };
@@ -202,7 +206,7 @@ export function resolveSafeMarkdownInput(input: string): { content: string; deri
 
 export function sanitizeBaseName(rawName: string): string {
   if (typeof rawName === 'string' && rawName.includes('\0')) {
-    throw new Error('Security Exception: Null bytes are not permitted in output name.');
+    throw new SecurityError('Security Exception: Null bytes are not permitted in output name.', 'NULL_BYTE');
   }
   const base = path.basename(rawName).trim();
   const sanitized = base.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
@@ -229,7 +233,10 @@ export function assertInsideDir(filePath: string, targetDir: string): void {
 
   const relative = path.relative(realTarget, realFile);
   if (relative.startsWith('..') || path.isAbsolute(relative) || realFile === realTarget) {
-    throw new Error(`Security Exception: Target path "${filePath}" attempts to escape output directory "${targetDir}".`);
+    throw new SecurityError(
+      `Security Exception: Target path "${filePath}" attempts to escape output directory "${targetDir}".`,
+      'PATH_TRAVERSAL'
+    );
   }
 }
 
@@ -298,8 +305,9 @@ async function acquireExportSlot(): Promise<void> {
     return;
   }
   if (waitQueue.length >= MAX_QUEUE_SIZE) {
-    throw new Error(
-      'Export capacity exceeded: Concurrency queue is full (max 20 pending requests). Please retry shortly.'
+    throw new ExportError(
+      'Export capacity exceeded: Concurrency queue is full (max 20 pending requests). Please retry shortly.',
+      'CAPACITY_EXCEEDED'
     );
   }
   return new Promise<void>((resolve) => {
@@ -394,7 +402,7 @@ export async function getBrowser(): Promise<Browser> {
     resetBrowserIdleTimer();
     return sharedBrowser;
   } catch (err: any) {
-    throw new Error(
+    throw new BrowserError(
       `Failed to launch headless browser for PDF/PNG export. ` +
       `HTML exports remain available without a browser. ` +
       `To enable PDF/PNG, run "npx puppeteer browsers install chrome" or set PUPPETEER_EXECUTABLE_PATH. ` +
@@ -472,7 +480,7 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
     // Validate outputDir: allow relative and safe absolute paths, block system and credential paths
     const trimmedOutputDir = outputDir.trim();
     if (trimmedOutputDir.includes('\0')) {
-      throw new Error('Security Exception: Null bytes are not permitted in output directory.');
+      throw new SecurityError('Security Exception: Null bytes are not permitted in output directory.', 'NULL_BYTE');
     }
     const cwd = path.resolve(process.cwd());
     const expandedOut = expandHome(trimmedOutputDir);
@@ -481,8 +489,9 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
       : path.resolve(cwd, expandedOut);
 
     if (isSystemOrRestrictedPath(resolvedOutputDir)) {
-      throw new Error(
-        `Security Exception: Access denied. Target output directory "${trimmedOutputDir}" is a restricted system or credential path.`
+      throw new SecurityError(
+        `Security Exception: Access denied. Target output directory "${trimmedOutputDir}" is a restricted system or credential path.`,
+        'RESTRICTED_PATH'
       );
     }
 
@@ -492,15 +501,17 @@ export async function exportPlan(options: ExportPlanOptions): Promise<ExportResu
 
     const realOutputDir = fs.realpathSync(resolvedOutputDir);
     if (isSystemOrRestrictedPath(realOutputDir)) {
-      throw new Error(
-        `Security Exception: Access denied. Target output directory resolves to a restricted system path.`
+      throw new SecurityError(
+        `Security Exception: Access denied. Target output directory resolves to a restricted system path.`,
+        'RESTRICTED_PATH'
       );
     }
 
     const dirStat = fs.statSync(realOutputDir);
     if (!dirStat.isDirectory()) {
-      throw new Error(
-        `Invalid output directory: Target path is not a directory: "${trimmedOutputDir}".`
+      throw new ExportError(
+        `Invalid output directory: Target path is not a directory: "${trimmedOutputDir}".`,
+        'NOT_A_DIRECTORY'
       );
     }
 

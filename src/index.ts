@@ -15,6 +15,7 @@ import { parseArgs } from 'node:util';
 import { exportPlan, closeBrowser } from './exporter.js';
 import type { ExportPlanOptions, ExportFormat, Theme } from './types.js';
 import { z } from 'zod';
+export { ExportError, SecurityError, BrowserError } from './errors.js';
 
 const ExportPlanSchema = z.object({
   input: z
