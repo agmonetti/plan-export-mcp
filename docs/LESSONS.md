@@ -106,16 +106,16 @@ Hardcoding a fixed language list (e.g. 10 languages) causes enterprise code bloc
 
 ---
 
-## 5. Normalizing AI Agent Artifacts (Links & Badges)
+## 5. Normalizing AI Agent Artifacts and Technical Prose
 
 ### Context
-Coding agents frequently output raw IDE filesystem URIs (e.g. `[OrderService.java](file:///home/user/project/backend/...)`) and uppercase action tokens (e.g. `[MODIFY]`, `[NEW]`, `[DELETE]`). In print, 120-character URLs wrap into four lines of broken text.
+Coding agents frequently output raw IDE filesystem URIs (for example, `[OrderService.java](file:///home/user/project/backend/...)`) and ASCII technical operators in prose. Local paths should not leak into shared documents, while code samples and Mermaid syntax must remain byte-for-byte meaningful.
 
 ### Pitfalls & Solutions
 - **Resolution:**
-  - Strip local file links into clean file tags: `[Name](file://...)` -> `<code class="file-name">Name</code>`.
-  - Transform action tags into styled badge pills: `[MODIFY]` -> `<span class="badge badge-modify">MODIFY</span>`.
-  - Transform table verdict keywords (`Cumplido`, `Faltante`, `Parcial`, `Approved`) into color-coded status chips.
+  - Transform `file://`, `vscode://`, `cursor://`, and `windsurf://` links and images at the parsed-token layer, retaining only the visible label as inline code.
+  - Normalize the closed prose catalog `<=>`, `<->`, `=>`, `->`, `<-`, `<=`, `>=`, `!=`, `+-`, and runs of three or more periods to Unicode glyphs.
+  - Restrict typography changes to visible text tokens; preserve code, autolinks, inline HTML blocks, Mermaid, link destinations, and ambiguous composite operators.
 
 ---
 

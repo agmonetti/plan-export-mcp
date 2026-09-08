@@ -23,6 +23,8 @@ When coding agents (**Cursor**, **Claude Code**, **Pi**, **Windsurf**, **Aider**
 - **High-Res PNG (Long Screenshot):** Rendered at 2x Retina DPR. Ideal for **WhatsApp and Slack** because it renders inline in chat feeds without forcing teammates to download a PDF reader.
 - **VS Code Code Highlighting:** Powered by **Shiki** with language badges and diff support (`+` / `-` lines).
 - **GitHub Callouts & Alerts:** Native support for `> [!NOTE]`, `> [!WARNING]`, `> [!TIP]`, `> [!IMPORTANT]`, and `> [!CAUTION]`.
+- **Technical Typography:** Visible Markdown prose uses Unicode arrows, comparisons, plus/minus, and ellipses while code, autolinks, HTML, and Mermaid stay unchanged.
+- **Private Artifact References:** `file://`, `vscode://`, `cursor://`, and `windsurf://` links render only their labels as inline code, without exposing local paths.
 - **Mermaid Architecture Diagrams:** Client-side vector rendering directly embedded as SVG.
 - **Clean A4 PDF:** Print-optimized with background colors and screen contrast preserved.
 - **Self-Contained HTML:** Embedded styles and local scripts with zero external dependencies.

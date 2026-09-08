@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it';
+import type Token from 'markdown-it/lib/token.mjs';
 import taskLists from 'markdown-it-task-lists';
 import { createHighlighter, bundledLanguages, type Highlighter } from 'shiki';
 import sanitizeHtml from 'sanitize-html';
@@ -176,6 +177,115 @@ function githubAlertsPlugin(md: MarkdownIt) {
     }
   });
 }
+function isLocalArtifactHref(href: string): boolean {
+  return /^(?:file|vscode|cursor|windsurf):\/\//i.test(href);
+}
+
+function extractInlineLabel(tokens: Token[]): string {
+  let label = '';
+
+  for (const token of tokens) {
+    if (token.type === 'text' || token.type === 'code_inline') {
+      label += token.content;
+    } else if (token.type === 'image') {
+      label += extractInlineLabel(token.children ?? []);
+    } else if (token.type === 'softbreak' || token.type === 'hardbreak') {
+      label += ' ';
+    }
+  }
+
+  return label.trim();
+}
+
+function localArtifactReferencesPlugin(md: MarkdownIt): void {
+  const validateLink = md.validateLink;
+  md.validateLink = (href) => isLocalArtifactHref(href) || validateLink(href);
+
+  md.core.ruler.after('inline', 'local_artifact_references', (state) => {
+    for (const blockToken of state.tokens) {
+      if (blockToken.type !== 'inline' || !blockToken.children) continue;
+
+      const tokens = blockToken.children;
+      for (let i = 0; i < tokens.length; i++) {
+        const token = tokens[i];
+        const href = token.attrGet(token.type === 'image' ? 'src' : 'href');
+
+        if (token.type === 'image' && href && isLocalArtifactHref(href)) {
+          const replacement = new state.Token('code_inline', 'code', 0);
+          replacement.content = extractInlineLabel(token.children ?? []) || 'file';
+          replacement.markup = '`';
+          replacement.level = token.level;
+          tokens.splice(i, 1, replacement);
+          continue;
+        }
+
+        if (token.type !== 'link_open' || !href || !isLocalArtifactHref(href)) continue;
+
+        let depth = 1;
+        let closeIndex = i + 1;
+        for (; closeIndex < tokens.length; closeIndex++) {
+          if (tokens[closeIndex].type === 'link_open') depth++;
+          if (tokens[closeIndex].type === 'link_close' && --depth === 0) break;
+        }
+        if (depth !== 0) continue;
+
+        const replacement = new state.Token('code_inline', 'code', 0);
+        replacement.content = extractInlineLabel(tokens.slice(i + 1, closeIndex)) || 'file';
+        replacement.markup = '`';
+        replacement.level = token.level;
+        tokens.splice(i, closeIndex - i + 1, replacement);
+      }
+    }
+  });
+}
+const TECHNICAL_OPERATOR_RE = /(?<![<>=!-])(?:<=>|<->|=>|->|<-|<=|>=|!=|\+-)(?![<>=!-])/g;
+const TECHNICAL_OPERATOR_GLYPHS: Record<string, string> = {
+  '<=>': '⇔',
+  '<->': '↔',
+  '=>': '⇒',
+  '->': '→',
+  '<-': '←',
+  '<=': '≤',
+  '>=': '≥',
+  '!=': '≠',
+  '+-': '±',
+};
+
+function normalizeTechnicalText(value: string): string {
+  return value
+    .replace(TECHNICAL_OPERATOR_RE, (operator) => TECHNICAL_OPERATOR_GLYPHS[operator])
+    .replace(/\.{3,}/g, '…');
+}
+
+function technicalTypographyPlugin(md: MarkdownIt): void {
+  md.core.ruler.after('linkify', 'technical_typography', (state) => {
+    for (let blockIndex = state.tokens.length - 1; blockIndex >= 0; blockIndex--) {
+      const blockToken = state.tokens[blockIndex];
+      if (blockToken.type !== 'inline' || !blockToken.children) continue;
+
+      const tokens = blockToken.children;
+      if (tokens.some((token) => token.type === 'html_inline')) continue;
+
+      let insideAutolink = 0;
+      for (let i = tokens.length - 1; i >= 0; i--) {
+        const token = tokens[i];
+
+        if (token.type === 'text' && insideAutolink === 0) {
+          token.content = normalizeTechnicalText(token.content);
+        }
+
+        if (token.type === 'link_open' && token.info === 'auto') {
+          insideAutolink--;
+        }
+        if (token.type === 'link_close' && token.info === 'auto') {
+          insideAutolink++;
+        }
+      }
+    }
+  });
+}
+
+
 
 function getMermaidBundle(): string {
   const localPaths = [
@@ -562,17 +672,10 @@ export async function renderMarkdownToHtml(
 
   md.use(taskLists, { enabled: true });
   md.use(githubAlertsPlugin);
+  md.use(localArtifactReferencesPlugin);
+  md.use(technicalTypographyPlugin);
 
-  // Normalize local IDE file links ([File](file:///...)) into clean inline code: `File`
-  const normalizedMarkdown = markdown.replace(
-    /\[([^\]]+)\]\((?:file|vscode|cursor|windsurf):\/\/[^\)]+\)/g,
-    (_, label) => {
-      const clean = label.trim().replace(/^`+|`+$/g, '');
-      return `\`${clean}\``;
-    }
-  );
-
-  const rawRenderedContent = md.render(normalizedMarkdown);
+  const rawRenderedContent = md.render(markdown);
   const renderedContent = sanitizeHtml(rawRenderedContent, SANITIZE_HTML_OPTIONS);
   const styles = getThemeStyles(theme);
 

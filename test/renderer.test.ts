@@ -116,4 +116,88 @@ describe('Markdown & HTML Renderer Tests', () => {
     assert.ok(!html.includes("url("), 'Should strip url() from style attributes');
     assert.ok(html.includes('color:#ff0000') || html.includes('color: #ff0000'), 'Should preserve safe hex colors');
   });
+  it('should normalize technical operators across visible prose surfaces', async () => {
+    const operators = 'p<=>q A<->B request=>response Client->API Worker<-Client x<=y Node>=18 x!=y tolerance+-5 wait.....';
+    const glyphs = 'p⇔q A↔B request⇒response Client→API Worker←Client x≤y Node≥18 x≠y tolerance±5 wait…';
+    const md = `# ${operators}
+
+${operators}
+
+- ${operators}
+
+| Operators |
+| --- |
+| ${operators} |
+
+[${operators}](https://example.com)`;
+    const html = await renderMarkdownToHtml(md, 'light');
+
+    assert.ok(html.includes(`<h1>${glyphs}</h1>`));
+    assert.ok(html.includes(`<p>${glyphs}</p>`));
+    assert.ok(html.includes(`<li>${glyphs}</li>`));
+    assert.ok(html.includes(`<td>${glyphs}</td>`));
+    assert.ok(html.includes(`>${glyphs}</a>`));
+  });
+
+  it('should isolate technical typography from code, Mermaid, autolinks, and HTML', async () => {
+    const operators = 'p<=>q A<->B request=>response Client->API Worker<-Client x<=y Node>=18 x!=y tolerance+-5 wait.....';
+    const autolink = '<https://example.com/%3C=%3E/%3C-%3E/=%3E/-%3E/%3C-/%3C=/%3E=/!=/+-/wait.../done>';
+    const md = `Inline: \`${operators}\`
+
+\`\`\`text
+${operators}
+\`\`\`
+
+\`\`\`mermaid
+%% ${operators}
+graph LR
+  A --> B
+\`\`\`
+
+Autolink: ${autolink}
+
+HTML: ${operators} <span>markup</span> ${operators}`;
+    const html = await renderMarkdownToHtml(md, 'light', { standaloneHtml: true });
+
+    for (const glyph of ['⇔', '↔', '⇒', '→', '←', '≤', '≥', '≠', '±', '…']) {
+      assert.ok(!html.includes(glyph), `Should preserve ASCII instead of rendering ${glyph}`);
+    }
+    assert.ok(html.includes('<code>p&lt;=&gt;q A&lt;-&gt;B request=&gt;response Client-&gt;API'));
+    assert.ok(html.includes('%% p&lt;=&gt;q A&lt;-&gt;B request=&gt;response Client-&gt;API'));
+    assert.ok(html.includes('graph LR\n  A --&gt; B'));
+    assert.ok(html.includes('https://example.com/&lt;=&gt;/&lt;-&gt;/=&gt;/-&gt;/&lt;-/&lt;=/&gt;=/!=/+-/wait.../done</a>'));
+    assert.ok(html.includes('HTML: p&lt;=&gt;q A&lt;-&gt;B request=&gt;response Client-&gt;API'));
+  });
+
+  it('should render local artifact references as clean inline code', async () => {
+    const md = `File: [**renderer.ts**](file:///home/private/project/src/renderer(a).ts "Source")
+VS Code: [reference label][source]
+Cursor: [cursor.json](CURSOR://workspace/private/cursor.json)
+Windsurf: [windsurf.md](windsurf://workspace/private/windsurf.md)
+Image: ![diagram *preview*.png](file:///home/private/project/diagram(1).png "Diagram")
+
+[source]: vscode://file/home/private/project/src/reference.ts "Reference"
+
+Relative: [guide](./guide.md)
+Web: [site](https://example.com)
+Mail: [owner](mailto:owner@example.com)
+Inline: \`[inline](file:///home/private/inline.ts)\`
+
+\`\`\`text
+[fence](windsurf://private/fence.ts)
+\`\`\``;
+    const html = await renderMarkdownToHtml(md, 'light');
+
+    for (const label of ['renderer.ts', 'reference label', 'cursor.json', 'windsurf.md', 'diagram preview.png']) {
+      assert.ok(html.includes(`<code>${label}</code>`), `Should render ${label} as inline code`);
+    }
+    assert.doesNotMatch(html, /(?:href|src)="(?:file|vscode|cursor|windsurf):\/\//i);
+    assert.ok(!html.includes('/home/private/project'));
+    assert.ok(html.includes('href="./guide.md"'));
+    assert.ok(html.includes('href="https://example.com"'));
+    assert.ok(html.includes('href="mailto:owner@example.com"'));
+    assert.ok(html.includes('[inline](file:///home/private/inline.ts)'));
+    assert.ok(html.includes('[fence](windsurf://private/fence.ts)'));
+  });
+
 });
