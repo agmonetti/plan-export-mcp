@@ -46,7 +46,7 @@ Runs on-demand without any global installation.
 
 #### Claude Code (One-liner CLI)
 ```bash
-claude mcp add plan-export npx -y plan-export-mcp
+claude mcp add plan-export npx -y @agmonetti/plan-export-mcp
 ```
 
 #### Claude Desktop & Cursor (JSON Configuration)
@@ -57,7 +57,7 @@ Add to your `claude_desktop_config.json` or `.cursor/mcp.json`:
   "mcpServers": {
     "plan-export": {
       "command": "npx",
-      "args": ["-y", "plan-export-mcp"]
+      "args": ["-y", "@agmonetti/plan-export-mcp"]
     }
   }
 }
@@ -77,7 +77,7 @@ Add to your `claude_desktop_config.json` or `.cursor/mcp.json`:
 Ideal for instant startup without network latency on every invocation:
 
 ```bash
-npm install -g plan-export-mcp
+npm install -g @agmonetti/plan-export-mcp
 ```
 
 ```json
@@ -122,10 +122,10 @@ You can also run it directly in your terminal:
 
 ```bash
 # Export to PNG and PDF in dark mode
-npx plan-export-mcp docs/plan.md --theme dark
+npx @agmonetti/plan-export-mcp docs/plan.md --theme dark
 
 # Export to all formats in light mode
-npx plan-export-mcp docs/plan.md --theme light --formats png,pdf,html --output-dir exports/
+npx @agmonetti/plan-export-mcp docs/plan.md --theme light --formats png,pdf,html --output-dir exports/
 ```
 
 ---

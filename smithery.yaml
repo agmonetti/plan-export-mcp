@@ -4,9 +4,9 @@ startCommand:
     command: npx
     args:
       - "-y"
-      - "plan-export-mcp"
+      - "@agmonetti/plan-export-mcp"
 
-name: plan-export-mcp
+name: "@agmonetti/plan-export-mcp"
 description: "Export AI agent plans and architectural audits to beautiful PDFs, high-res PNGs, and self-contained HTML files."
 tools:
   - name: export_plan

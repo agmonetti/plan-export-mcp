@@ -346,11 +346,11 @@ export async function runCli(args: string[]) {
   if (values.help) {
     const v = getPackageVersion();
     console.log(`
-plan-export-mcp v${v}
+@agmonetti/plan-export-mcp v${v}
 
 Usage:
-  npx plan-export-mcp <file.md> [options]    Run as CLI
-  npx plan-export-mcp                       Run as MCP stdio server
+  npx @agmonetti/plan-export-mcp <file.md> [options]    Run as CLI
+  npx @agmonetti/plan-export-mcp                       Run as MCP stdio server
 
 Options:
   --theme <light|dark>      Theme to use (default: light)
