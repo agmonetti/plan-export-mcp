@@ -14,7 +14,6 @@ import type {
 } from './types.js';
 import { ExportError, SecurityError, BrowserError } from './errors.js';
 import { CONFIG } from './config.js';
-import { gracefulExit } from './shutdown.js';
 
 export function expandHome(filePath: string): string {
   if (filePath === '~' || filePath.startsWith('~/')) {
@@ -140,8 +139,8 @@ export function resolveSafeMarkdownInput(input: string): { content: string; deri
 
       let fd: number | null = null;
       try {
-        // Open file descriptor atomically to eliminate TOCTOU symlink races
-        fd = fs.openSync(realPath, 'r');
+        // Non-blocking open lets fstat reject FIFOs without freezing the event loop.
+        fd = fs.openSync(realPath, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
         const stat = fs.fstatSync(fd);
 
         if (!stat.isFile()) {
@@ -331,10 +330,15 @@ export class ExportService {
   private activeExports = 0;
   private waitQueue: Array<() => void> = [];
   private browserIdleTimer: NodeJS.Timeout | null = null;
+  private browserLaunch: Promise<Browser> | null = null;
+  private cancelBrowserLaunch: (() => void) | null = null;
+  private launchGeneration = 0;
   private config: typeof CONFIG;
+  private launcher: (executablePath?: string) => Promise<Browser>;
 
-  constructor(config: typeof CONFIG = CONFIG) {
+  constructor(config: typeof CONFIG = CONFIG, launcher = launchChromiumWithFallback) {
     this.config = config;
+    this.launcher = launcher;
   }
 
   public getActiveExports(): number {
@@ -410,34 +414,58 @@ export class ExportService {
         this.sharedBrowser = null;
       }
     }
+    if (this.browserLaunch) return this.browserLaunch;
 
-    const executablePath = resolveExecutablePath();
+    const generation = this.launchGeneration;
+    let timedOut = false;
+    let timeout: NodeJS.Timeout;
+    let cancelLaunch!: () => void;
+    const cancelled = new Promise<never>((_, reject) => {
+      cancelLaunch = () => reject(new Error('Browser launch cancelled by closeBrowser.'));
+    });
+    this.cancelBrowserLaunch = cancelLaunch;
 
-    try {
-      const launchPromise = launchChromiumWithFallback(executablePath);
-
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        const t = setTimeout(() => {
-          reject(
-            new Error(
-              `Timed out after ${this.config.timeouts.browserLaunchMs / 1000}s attempting to launch headless browser.`
-            )
-          );
-        }, this.config.timeouts.browserLaunchMs);
-        if (typeof t.unref === 'function') t.unref();
-      });
-
-      this.sharedBrowser = await Promise.race([launchPromise, timeoutPromise]);
+    const launch = Promise.resolve().then(() => this.launcher(resolveExecutablePath())).then(async (browser) => {
+      if (timedOut || generation !== this.launchGeneration) {
+        await browser.close().catch(() => {});
+        throw new Error(timedOut ? 'Browser launch timed out.' : 'Browser launch cancelled by closeBrowser.');
+      }
+      this.sharedBrowser = browser;
       this.resetBrowserIdleTimer();
-      return this.sharedBrowser;
-    } catch (err: any) {
-      throw new BrowserError(
-        `Failed to launch headless browser for PDF/PNG export. ` +
-        `HTML exports remain available without a browser. ` +
-        `To enable PDF/PNG, run "npx puppeteer browsers install chrome" or set PUPPETEER_EXECUTABLE_PATH. ` +
-        `Details: ${err?.message || err}`
-      );
-    }
+      return browser;
+    });
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        timedOut = true;
+        reject(
+          new Error(
+            `Timed out after ${this.config.timeouts.browserLaunchMs / 1000}s attempting to launch headless browser.`
+          )
+        );
+      }, this.config.timeouts.browserLaunchMs);
+      if (typeof timeout.unref === 'function') timeout.unref();
+    });
+
+    let pending: Promise<Browser>;
+    pending = Promise.race([launch, timeoutPromise, cancelled])
+      .catch((err: any) => {
+        if (this.browserLaunch === pending) this.browserLaunch = null;
+        if (this.cancelBrowserLaunch === cancelLaunch) this.cancelBrowserLaunch = null;
+        throw new BrowserError(
+          `Failed to launch headless browser for PDF/PNG export. ` +
+          `HTML exports remain available without a browser. ` +
+          `To enable PDF/PNG, run "npx puppeteer browsers install chrome" or set PUPPETEER_EXECUTABLE_PATH. ` +
+          `Details: ${err?.message || err}`
+        );
+      })
+      .finally(() => {
+        clearTimeout(timeout);
+        if (this.browserLaunch === pending) this.browserLaunch = null;
+        if (this.cancelBrowserLaunch === cancelLaunch) this.cancelBrowserLaunch = null;
+      });
+    this.browserLaunch = pending;
+    return pending;
   }
 
   public async closeBrowser(): Promise<void> {
@@ -445,6 +473,10 @@ export class ExportService {
       clearTimeout(this.browserIdleTimer);
       this.browserIdleTimer = null;
     }
+    this.launchGeneration++;
+    this.cancelBrowserLaunch?.();
+    this.cancelBrowserLaunch = null;
+    this.browserLaunch = null;
     if (this.sharedBrowser) {
       try {
         await this.sharedBrowser.close();
@@ -789,17 +821,4 @@ export async function closeBrowser(): Promise<void> {
 export function resetBrowserIdleTimer(): void {
   defaultExportService.resetBrowserIdleTimer();
 }
-
-// Robust cleanup on termination signals
-function handleExitSignal(): void {
-  defaultExportService
-    .closeBrowser()
-    .catch(() => {})
-    .finally(() => {
-      gracefulExit(0);
-    });
-}
-
-process.on('SIGINT', handleExitSignal);
-process.on('SIGTERM', handleExitSignal);
 

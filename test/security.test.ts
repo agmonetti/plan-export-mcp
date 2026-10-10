@@ -2,6 +2,9 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import {
   resolveSafeMarkdownInput,
   sanitizeBaseName,
@@ -64,6 +67,31 @@ describe('Security & Input Validation Tests', () => {
         () => resolveSafeMarkdownInput('definitely-nonexistent-file.md'),
         /File not found/
       );
+    });
+
+    it('should reject named pipes without blocking the caller', { skip: process.platform !== 'linux' }, () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-export-fifo-'));
+      const fifoPath = path.join(tempDir, 'input.md');
+      try {
+        execFileSync('mkfifo', [fifoPath]);
+        const exporterUrl = pathToFileURL(path.resolve('src/exporter.ts')).href;
+        const script = `
+          import { resolveSafeMarkdownInput } from ${JSON.stringify(exporterUrl)};
+          try {
+            resolveSafeMarkdownInput(${JSON.stringify(fifoPath)});
+            process.exit(2);
+          } catch (error) {
+            process.exit(error.code === 'NOT_A_FILE' ? 0 : 3);
+          }
+        `;
+        const result = spawnSync('timeout', ['3s', process.execPath, '--import', 'tsx', '--input-type=module', '-e', script], {
+          encoding: 'utf8',
+          timeout: 4000,
+        });
+        assert.equal(result.status, 0, `child did not reject FIFO safely: ${result.stderr || result.error || result.status}`);
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
     });
 
     it('should reject symlinks targeting restricted system files', () => {
