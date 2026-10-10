@@ -1,6 +1,6 @@
 {
   "name": "@agmonetti/plan-export-mcp",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "MCP server to export AI agent plans and architectural audits to beautiful PDFs, high-res PNGs, and self-contained HTML files.",
   "type": "module",
   "bin": {

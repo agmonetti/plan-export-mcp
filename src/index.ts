@@ -90,7 +90,7 @@ export function getPackageVersion(): string {
   } catch {
     // fallback
   }
-  return '0.1.0';
+  return '0.2.0';
 }
 
 export async function runMcpServer() {
