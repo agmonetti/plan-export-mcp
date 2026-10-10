@@ -2,7 +2,7 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ExportService, defaultExportService, CONFIG, ExportError } from '../src/index.js';
+import { ExportService, defaultExportService, CONFIG, ExportError, BrowserError } from '../src/index.js';
 
 describe('ExportService Unit Tests', () => {
   const tempDir = path.join(process.cwd(), '.tmp-service-test');
@@ -121,6 +121,149 @@ describe('ExportService Unit Tests', () => {
       { encoding: 'utf-8' }
     );
     assert.equal(result.trim(), '');
+  });
+
+  it('should share exactly one in-flight launch between concurrent getBrowser requests', async () => {
+    let launchCount = 0;
+    const mockBrowser = {
+      connected: true,
+      version: async () => '1.0',
+      close: async () => {},
+    };
+    const mockLauncher = async () => {
+      launchCount++;
+      await new Promise((r) => setTimeout(r, 50));
+      return mockBrowser as any;
+    };
+
+    const service = new ExportService(CONFIG, mockLauncher as any);
+    const [b1, b2] = await Promise.all([service.getBrowser(), service.getBrowser()]);
+
+    assert.equal(launchCount, 1);
+    assert.equal(b1, b2);
+    assert.equal(b1, mockBrowser);
+  });
+
+  it('should close browser if launch completes after timeout to prevent orphaning Chromium', async () => {
+    let closed = false;
+    const mockBrowser = {
+      connected: true,
+      version: async () => '1.0',
+      close: async () => {
+        closed = true;
+      },
+    };
+
+    const mockLauncher = async () => {
+      await new Promise((r) => setTimeout(r, 60));
+      return mockBrowser as any;
+    };
+
+    const customConfig = {
+      ...CONFIG,
+      timeouts: {
+        ...CONFIG.timeouts,
+        browserLaunchMs: 20,
+      },
+    };
+
+    const service = new ExportService(customConfig, mockLauncher as any);
+
+    await assert.rejects(
+      async () => {
+        await service.getBrowser();
+      },
+      (err: any) => {
+        assert.ok(err instanceof BrowserError);
+        assert.match(err.message, /Timed out/);
+        return true;
+      }
+    );
+
+    await new Promise((r) => setTimeout(r, 80));
+
+    assert.equal(closed, true, 'Browser should be closed after completing past timeout');
+    assert.equal(service.hasActiveBrowser(), false);
+  });
+
+  it('should preserve the newer launch cancellation callback when a cancelled launch overlaps a retry', async () => {
+    const launchResolvers: Array<(browser: any) => void> = [];
+    const mockLauncher = () => new Promise<any>((resolve) => launchResolvers.push(resolve));
+    const service = new ExportService(CONFIG, mockLauncher as any);
+    const firstLaunch = service.getBrowser();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(launchResolvers.length, 1);
+
+    const firstClose = service.closeBrowser();
+    const secondLaunch = service.getBrowser();
+    await firstClose;
+    await assert.rejects(firstLaunch, /cancelled by closeBrowser/);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(launchResolvers.length, 2);
+
+    await service.closeBrowser();
+    await assert.rejects(secondLaunch, /cancelled by closeBrowser/);
+  });
+
+  it('should close browser if launch completes after service close to prevent orphaning Chromium', async () => {
+    let closed = false;
+    const mockBrowser = {
+      connected: true,
+      version: async () => '1.0',
+      close: async () => {
+        closed = true;
+      },
+    };
+
+    const mockLauncher = async () => {
+      await new Promise((r) => setTimeout(r, 50));
+      return mockBrowser as any;
+    };
+
+    const service = new ExportService(CONFIG, mockLauncher as any);
+
+    const launchPromise = service.getBrowser().catch(() => {});
+    await service.closeBrowser();
+    await launchPromise;
+
+    await new Promise((r) => setTimeout(r, 70));
+
+    assert.equal(closed, true, 'Browser should be closed if launch finishes after closeBrowser');
+    assert.equal(service.hasActiveBrowser(), false);
+  });
+
+  it('should retry launch after a previous launch failure', async () => {
+    let attempts = 0;
+    const mockBrowser = {
+      connected: true,
+      version: async () => '1.0',
+      close: async () => {},
+    };
+
+    const mockLauncher = async () => {
+      attempts++;
+      if (attempts === 1) {
+        throw new Error('Launch failure simulated');
+      }
+      return mockBrowser as any;
+    };
+
+    const service = new ExportService(CONFIG, mockLauncher as any);
+
+    await assert.rejects(
+      async () => {
+        await service.getBrowser();
+      },
+      (err: any) => {
+        assert.ok(err instanceof BrowserError);
+        assert.match(err.message, /Launch failure simulated/);
+        return true;
+      }
+    );
+
+    const b = await service.getBrowser();
+    assert.equal(attempts, 2);
+    assert.equal(b, mockBrowser);
   });
 });
 
