@@ -2,15 +2,14 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { ExportService, defaultExportService, CONFIG, ExportError, BrowserError } from '../src/index.js';
 
 describe('ExportService Unit Tests', () => {
-  const tempDir = path.join(process.cwd(), '.tmp-service-test');
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-export-service-'));
 
   after(() => {
-    if (fs.existsSync(tempDir)) {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
   it('should instantiate ExportService with default and custom configurations', () => {
@@ -230,6 +229,57 @@ describe('ExportService Unit Tests', () => {
 
     assert.equal(closed, true, 'Browser should be closed if launch finishes after closeBrowser');
     assert.equal(service.hasActiveBrowser(), false);
+  });
+
+  it('should export a PDF through a mock page with print options and a generated path', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-export-pdf-'));
+    let pdfOptions: any;
+    let mediaType: string | undefined;
+    let pageClosed = false;
+    const mockPage = {
+      setRequestInterception: async () => {},
+      on: () => {},
+      setDefaultTimeout: () => {},
+      setJavaScriptEnabled: async () => {},
+      setViewport: async () => {},
+      setContent: async () => {},
+      emulateMediaType: async (type: string) => { mediaType = type; },
+      pdf: async (options: any) => {
+        pdfOptions = options;
+        fs.writeFileSync(options.path, '%PDF-mock');
+      },
+      close: async () => { pageClosed = true; },
+    };
+    const mockBrowser = {
+      connected: true,
+      version: async () => '1.0',
+      newPage: async () => mockPage,
+      close: async () => {},
+    };
+    const service = new ExportService(CONFIG, async () => mockBrowser as any);
+
+    try {
+      const results = await service.exportPlan({
+        input: '# PDF smoke\n\nGenerated with a mock page.',
+        formats: ['pdf'],
+        outputDir: tempDir,
+        outputName: 'pdf-smoke',
+      });
+      const expectedPath = path.join(tempDir, 'pdf-smoke.pdf');
+      assert.deepEqual(results, [{ format: 'pdf', path: expectedPath }]);
+      assert.equal(mediaType, 'print');
+      assert.deepEqual(pdfOptions, {
+        path: expectedPath,
+        format: 'A4',
+        printBackground: true,
+        margin: { top: '0', bottom: '0', left: '0', right: '0' },
+      });
+      assert.equal(fs.readFileSync(expectedPath, 'utf8'), '%PDF-mock');
+      assert.equal(pageClosed, true);
+    } finally {
+      await service.closeBrowser();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('should retry launch after a previous launch failure', async () => {
