@@ -27,7 +27,7 @@ When coding agents (**Cursor**, **Claude Code**, **Pi**, **Windsurf**, **Aider**
 - **Private Artifact References:** `file://`, `vscode://`, `cursor://`, and `windsurf://` links render only their labels as inline code, without exposing local paths.
 - **Mermaid Architecture Diagrams:** Client-side vector rendering directly embedded as SVG.
 - **Clean A4 PDF:** Print-optimized with background colors and screen contrast preserved.
-- **Self-Contained HTML:** Embedded styles and local scripts with zero external dependencies.
+- **Standalone HTML:** Embedded styles; Mermaid diagrams load a pinned CDN script, and HTTPS images remain external. Fully offline viewing requires no Mermaid diagrams or external images.
 - **Dual Mode:** Use it as an **MCP server** for AI agents or as a standalone **CLI tool**.
 
 ---
@@ -139,12 +139,14 @@ Your AI agent can invoke this tool directly:
 ```typescript
 {
   "input": "docs/plans/feature-auth.md", // or raw markdown string
-  "theme": "dark",                       // "dark" | "light" (default: "dark")
+  "theme": "dark",                       // "dark" | "light" (default: "light")
   "formats": ["png", "pdf"],             // ["png", "pdf", "html"]
   "outputDir": "./exports",              // default: "./exports"
   "outputName": "auth-plan"              // default: derived from file
 }
 ```
+
+Remote images are format-dependent: standalone HTML may load HTTPS images from the viewer's network, while PNG/PDF browser rendering blocks external images. The browser permits the pinned Mermaid CDN script as a fallback if the bundled script is unavailable. Use embedded `data:` images for portable exports; local file URLs are not loaded.
 
 ---
 
