@@ -2,7 +2,7 @@
 
 Locator: `odd/tasks/export-contracts.md`
 Branch: `fix/export-contracts` (child slice 2, based on `fix/export-runtime-reliability` at `2129179`)
-Tracker: local `feature/plan-export-audit` at verified default branch `main` (`bee8379`); no push or PR authorized.
+Tracker: local `feat/plan-export-audit` at verified default branch `main` (`bee8379`); no push or PR authorized.
 Status: completed
 
 ## Objective
