@@ -35,7 +35,7 @@ When coding agents (**Cursor**, **Claude Code**, **Pi**, **Windsurf**, **Aider**
 ## Installation and Usage
 
 ### Prerequisites
-- Node.js 18+
+- Node.js 20+
 - npm, pnpm, or yarn
 
 *(Note: HTML exports run in pure Node.js with zero browser dependencies. For PDF/PNG rendering, Puppeteer manages a lightweight headless browser automatically or uses system Chromium if present).*
@@ -150,7 +150,7 @@ Your AI agent can invoke this tool directly:
 
 ## Architecture
 
-- **Runtime:** Node.js (>= 18) + TypeScript
+- **Runtime:** Node.js (>= 20) + TypeScript
 - **MCP SDK:** `@modelcontextprotocol/sdk` (stdio transport)
 - **Highlighter:** Shiki (VS Code TextMate engine)
 - **Diagrams:** Mermaid.js
