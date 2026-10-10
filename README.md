@@ -148,6 +148,8 @@ Your AI agent can invoke this tool directly:
 
 Remote images are format-dependent: standalone HTML may load HTTPS images from the viewer's network, while PNG/PDF browser rendering blocks external images. The browser permits the pinned Mermaid CDN script as a fallback if the bundled script is unavailable. Use embedded `data:` images for portable exports; local file URLs are not loaded.
 
+Input files may be reached through symlinks to permitted targets. Path validation assumes a trusted local filesystem: it does not protect against another local process replacing files or directory entries concurrently between path resolution and opening. Do not accept input paths in directories an untrusted local user can modify.
+
 ---
 
 ## Architecture
