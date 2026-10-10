@@ -139,8 +139,8 @@ export function resolveSafeMarkdownInput(input: string): { content: string; deri
 
       let fd: number | null = null;
       try {
-        // Open file descriptor atomically to eliminate TOCTOU symlink races
-        fd = fs.openSync(realPath, 'r');
+        // Non-blocking open lets fstat reject FIFOs without freezing the event loop.
+        fd = fs.openSync(realPath, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
         const stat = fs.fstatSync(fd);
 
         if (!stat.isFile()) {
