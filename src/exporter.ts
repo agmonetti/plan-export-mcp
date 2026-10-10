@@ -14,7 +14,6 @@ import type {
 } from './types.js';
 import { ExportError, SecurityError, BrowserError } from './errors.js';
 import { CONFIG } from './config.js';
-import { gracefulExit } from './shutdown.js';
 
 export function expandHome(filePath: string): string {
   if (filePath === '~' || filePath.startsWith('~/')) {
@@ -789,17 +788,4 @@ export async function closeBrowser(): Promise<void> {
 export function resetBrowserIdleTimer(): void {
   defaultExportService.resetBrowserIdleTimer();
 }
-
-// Robust cleanup on termination signals
-function handleExitSignal(): void {
-  defaultExportService
-    .closeBrowser()
-    .catch(() => {})
-    .finally(() => {
-      gracefulExit(0);
-    });
-}
-
-process.on('SIGINT', handleExitSignal);
-process.on('SIGTERM', handleExitSignal);
 

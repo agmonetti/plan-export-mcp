@@ -101,5 +101,26 @@ describe('ExportService Unit Tests', () => {
     assert.equal(process.listenerCount('SIGINT'), initialSigintCount);
     assert.equal(process.listenerCount('SIGTERM'), initialSigtermCount);
   });
+
+  it('should not register SIGINT or SIGTERM listeners on exporter module import', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const checkScript = `
+      const sigintBefore = process.listenerCount('SIGINT');
+      const sigtermBefore = process.listenerCount('SIGTERM');
+      await import('./src/exporter.js');
+      const sigintDiff = process.listenerCount('SIGINT') - sigintBefore;
+      const sigtermDiff = process.listenerCount('SIGTERM') - sigtermBefore;
+      if (sigintDiff !== 0 || sigtermDiff !== 0) {
+        console.error(JSON.stringify({ sigintDiff, sigtermDiff }));
+        process.exit(1);
+      }
+    `;
+    const result = execFileSync(
+      process.execPath,
+      ['--import', 'tsx/esm', '--input-type=module', '-e', checkScript],
+      { encoding: 'utf-8' }
+    );
+    assert.equal(result.trim(), '');
+  });
 });
 
