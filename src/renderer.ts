@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import type Token from 'markdown-it/lib/token.mjs';
+import markdownItKatex from '@vscode/markdown-it-katex';
 import taskLists from 'markdown-it-task-lists';
 import { createHighlighter, bundledLanguages, type Highlighter } from 'shiki';
 import sanitizeHtml from 'sanitize-html';
@@ -9,23 +10,36 @@ import { fileURLToPath } from 'url';
 import type { Theme } from './types.js';
 import { CONFIG } from './config.js';
 
+const MATHML_TAGS = [
+  'math', 'semantics', 'annotation', 'annotation-xml',
+  'mrow', 'mi', 'mo', 'mn', 'ms', 'mspace', 'mtext',
+  'msqrt', 'mroot', 'mfrac', 'msub', 'msup', 'msubsup',
+  'munder', 'mover', 'munderover',
+  'mtable', 'mtr', 'mtd', 'mlabeledtr',
+  'menclose', 'mpadded', 'mphantom', 'mglyph',
+];
+
 const SANITIZE_HTML_OPTIONS: sanitizeHtml.IOptions = {
   allowedTags: [
     ...sanitizeHtml.defaults.allowedTags,
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-    'img', 'svg', 'path',
+    'img', 'svg', 'path', 'line',
     'input',
     'details', 'summary',
     'kbd', 'del', 'ins', 'sub', 'sup',
+    ...MATHML_TAGS,
   ],
   allowedAttributes: {
     ...sanitizeHtml.defaults.allowedAttributes,
     '*': ['class', 'id', 'aria-*', 'role'],
     pre: ['style', 'tabindex'],
-    span: ['style'],
+    span: ['style', 'aria-hidden'],
     code: ['style'],
-    svg: ['class', 'viewbox', 'viewBox', 'width', 'height', 'fill', 'xmlns'],
+    svg: ['class', 'viewbox', 'viewBox', 'width', 'height', 'fill', 'xmlns', 'preserveaspectratio', 'preserveAspectRatio'],
     path: ['d', 'fill', 'fill-rule', 'clip-rule'],
+    line: ['x1', 'y1', 'x2', 'y2', 'stroke', 'stroke-width'],
+    math: ['xmlns', 'display'],
+    annotation: ['encoding'],
     input: ['type', 'checked', 'disabled', 'class'],
     a: ['href', 'name', 'target', 'rel'],
     img: ['src', 'alt', 'title', 'width', 'height', 'loading'],
@@ -62,8 +76,30 @@ const SANITIZE_HTML_OPTIONS: sanitizeHtml.IOptions = {
       'background-color': [/^\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)|var\(--[a-zA-Z0-9_-]+\)|[a-zA-Z]+)\s*$/],
       'text-align': [/^(left|right|center|justify)$/],
       'font-weight': [/^(bold|normal|[1-9]00)$/],
-      'width': [/^\d+(px|em|rem|%)?$/],
-      'height': [/^\d+(px|em|rem|%)?$/],
+      'width': [/^\d+(\.\d+)?(px|em|rem|%|ex)?$/],
+      'height': [/^\d+(\.\d+)?(px|em|rem|%|ex)?$/],
+      'min-width': [/^\d+(\.\d+)?(px|em|rem|%|ex)?$/],
+      'max-width': [/^\d+(\.\d+)?(px|em|rem|%|ex)?$/],
+      'top': [/^-?\d+(\.\d+)?(px|em|rem|%|ex)?$/],
+      'bottom': [/^-?\d+(\.\d+)?(px|em|rem|%|ex)?$/],
+      'left': [/^-?\d+(\.\d+)?(px|em|rem|%|ex)?$/],
+      'right': [/^-?\d+(\.\d+)?(px|em|rem|%|ex)?$/],
+      'vertical-align': [/^(-?\d+(\.\d+)?(px|em|rem|%|ex)?|baseline|sub|super|top|text-top|middle|bottom|text-bottom)$/],
+      'margin-top': [/^-?\d+(\.\d+)?(px|em|rem|%|ex)?$/],
+      'margin-bottom': [/^-?\d+(\.\d+)?(px|em|rem|%|ex)?$/],
+      'margin-left': [/^-?\d+(\.\d+)?(px|em|rem|%|ex)?$/],
+      'margin-right': [/^-?\d+(\.\d+)?(px|em|rem|%|ex)?$/],
+      'padding-top': [/^\d+(\.\d+)?(px|em|rem|%|ex)?$/],
+      'padding-bottom': [/^\d+(\.\d+)?(px|em|rem|%|ex)?$/],
+      'padding-left': [/^\d+(\.\d+)?(px|em|rem|%|ex)?$/],
+      'padding-right': [/^\d+(\.\d+)?(px|em|rem|%|ex)?$/],
+      'border-width': [/^\d+(\.\d+)?(px|em|rem)?$/],
+      'border-top-width': [/^\d+(\.\d+)?(px|em|rem)?$/],
+      'border-bottom-width': [/^\d+(\.\d+)?(px|em|rem)?$/],
+      'border-color': [/^\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)|var\(--[a-zA-Z0-9_-]+\)|[a-zA-Z]+)\s*$/],
+      'border-style': [/^(none|hidden|dotted|dashed|solid|double|groove|ridge|inset|outset)$/],
+      'position': [/^(static|relative|absolute|fixed|sticky)$/],
+      'display': [/^(inline|block|inline-block|flex|inline-flex|table|table-row|table-cell|none)$/],
     },
   },
   allowedSchemes: ['http', 'https', 'mailto'],
@@ -303,6 +339,26 @@ function getMermaidBundle(): string {
           .replace(/<\/script/gi, '<\\/script')
           .replace(/<\/body/gi, '<\\/body')
           .replace(/<\/html/gi, '<\\/html');
+      } catch {
+        // continue
+      }
+    }
+  }
+  return '';
+}
+
+function getKatexCss(): string {
+  const localPaths = [
+    path.join(__dirname, '../node_modules/katex/dist/katex.min.css'),
+    path.join(__dirname, '../../node_modules/katex/dist/katex.min.css'),
+    path.resolve(process.cwd(), 'node_modules/katex/dist/katex.min.css'),
+  ];
+
+  for (const p of localPaths) {
+    if (fs.existsSync(p)) {
+      try {
+        const raw = fs.readFileSync(p, 'utf-8');
+        return raw.replace(/url\(fonts\//g, `url(https://cdn.jsdelivr.net/npm/katex@${CONFIG.katex.version}/dist/fonts/`);
       } catch {
         // continue
       }
@@ -670,14 +726,26 @@ export async function renderMarkdownToHtml(
     return `<div class="code-card"><div class="code-card-header"><span>${displayLang}</span></div>${highlightedCode}</div>\n`;
   };
 
+  const katexPlugin = (markdownItKatex as any)?.default || markdownItKatex;
+  md.use(katexPlugin, { throwOnError: false });
   md.use(taskLists, { enabled: true });
   md.use(githubAlertsPlugin);
   md.use(localArtifactReferencesPlugin);
   md.use(technicalTypographyPlugin);
 
   const rawRenderedContent = md.render(markdown);
+  const hasMath = rawRenderedContent.includes('class="katex');
   const renderedContent = sanitizeHtml(rawRenderedContent, SANITIZE_HTML_OPTIONS);
   const styles = getThemeStyles(theme);
+
+  let katexAssets = '';
+  if (hasMath) {
+    const localKatex = getKatexCss();
+    const useCdn = options.standaloneHtml === true || !localKatex;
+    katexAssets = useCdn
+      ? `\n  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@${CONFIG.katex.version}/dist/katex.min.css" integrity="${CONFIG.katex.sri}" crossorigin="anonymous">`
+      : `\n  <style>\n${localKatex}\n  </style>`;
+  }
 
   let mermaidAssets = '';
   if (hasMermaid) {
@@ -716,7 +784,9 @@ export async function renderMarkdownToHtml(
   }
 
   const scriptSrc = hasMermaid ? "'unsafe-inline' https://cdn.jsdelivr.net" : "'none'";
-  const csp = `default-src 'none'; style-src 'unsafe-inline'; script-src ${scriptSrc}; img-src data: https:; font-src data:;`;
+  const styleSrc = hasMath && options.standaloneHtml ? "'unsafe-inline' https://cdn.jsdelivr.net" : "'unsafe-inline'";
+  const fontSrc = hasMath ? 'data: https://cdn.jsdelivr.net' : 'data:';
+  const csp = `default-src 'none'; style-src ${styleSrc}; script-src ${scriptSrc}; img-src data: https:; font-src ${fontSrc};`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -727,7 +797,7 @@ export async function renderMarkdownToHtml(
   <title>Implementation Plan</title>
   <style>
     ${styles}
-  </style>
+  </style>${katexAssets}
 </head>
 <body>
   <div class="plan-wrapper">

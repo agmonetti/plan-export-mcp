@@ -21,6 +21,10 @@ export const CONFIG = {
     version: '11.17.2',
     sri: 'sha384-EOXBFmc3gx5mb+vn0vPvvGqACToJD24hhacX5Yx+8NUUQrHIle/Qi5Bg9o3zKwW2',
   },
+  katex: {
+    version: '0.19.1',
+    sri: 'sha384-WwGtaC6ywCHxA5cstpj/3+xIZvTez8dq2IcBQaXRkenHZ7FVVq1ZROtURwfbtTlG',
+  },
   commonChromePaths: [
     // Linux
     '/usr/bin/google-chrome-stable',
