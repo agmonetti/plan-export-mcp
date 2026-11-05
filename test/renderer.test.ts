@@ -200,4 +200,44 @@ Inline: \`[inline](file:///home/private/inline.ts)\`
     assert.ok(html.includes('[fence](windsurf://private/fence.ts)'));
   });
 
+  it('should render inline and block LaTeX math formulas with KaTeX', async () => {
+    const mathMd = `
+# Complexity Analysis
+Given a graph with $|E| \\approx |V|^2$ edges and density $\\mathcal{O}(|V|^2)$:
+$$
+\\text{dist}(i, j, k) = \\min\\big(\\text{dist}(i, j, k-1), \\dots\\big)
+$$
+Overall time complexity is $$\\mathcal{O}(n^3)$$.
+`;
+    const html = await renderMarkdownToHtml(mathMd, 'light', { standaloneHtml: true });
+
+    // Verify formulas are parsed into KaTeX structure
+    assert.ok(html.includes('class="katex"'), 'Should contain KaTeX root element');
+    assert.ok(html.includes('class="katex-mathml"'), 'Should contain MathML representation');
+    assert.ok(html.includes('<math xmlns="http://www.w3.org/1998/Math/MathML"'), 'Should preserve MathML tags');
+    assert.ok(html.includes('class="katex-display"'), 'Should render display block for $$ ... $$');
+    assert.ok(html.includes('cdn.jsdelivr.net/npm/katex@0.19.1/dist/katex.min.css'), 'Should link KaTeX CSS in standalone mode');
+    assert.ok(html.includes('font-src data: https://cdn.jsdelivr.net'), 'Should allow font CDN in CSP when math exists');
+    assert.ok(html.includes("style-src 'unsafe-inline' https://cdn.jsdelivr.net"), 'Should allow stylesheet CDN in CSP for standalone math');
+    assert.ok(!html.includes('$$'), 'Should not leave raw block dollar delimiters');
+  });
+
+  it('should isolate math formulas from technical operator substitutions', async () => {
+    const mathWithOperatorsMd = 'Formula with comparisons: $x <= y$ and $A -> B$ and text outside: x<=y and A->B.';
+    const html = await renderMarkdownToHtml(mathWithOperatorsMd, 'light');
+
+    // Inside math, LaTeX symbols must not be mangled into unicode glyphs
+    assert.ok(html.includes('class="katex"'));
+    // Text outside should be normalized
+    assert.ok(html.includes('x≤y and A→B.'));
+  });
+
+  it('should not inject KaTeX assets or relax CSP when markdown contains no math', async () => {
+    const noMathMd = '# Normal Document\nThis document has no math formulas at all.';
+    const html = await renderMarkdownToHtml(noMathMd, 'light', { standaloneHtml: true });
+
+    assert.ok(!html.includes('katex'), 'Should not include KaTeX assets');
+    assert.ok(!html.includes('cdn.jsdelivr.net/npm/katex'), 'Should not reference KaTeX CDN');
+    assert.ok(html.includes('font-src data:;'), 'Should keep font-src strictly data: when no math');
+  });
 });

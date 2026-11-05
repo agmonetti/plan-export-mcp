@@ -309,13 +309,13 @@ export function isAllowedBrowserUrl(urlStr: string): boolean {
     if (parsed.protocol !== 'https:') {
       return false;
     }
-    // Strict hostname and path validation for Mermaid CDN with no credentials or unusual ports
+    // Strict hostname and path validation for Mermaid & KaTeX CDN with no credentials or unusual ports
     if (
       parsed.hostname === 'cdn.jsdelivr.net' &&
       !parsed.username &&
       !parsed.password &&
       (!parsed.port || parsed.port === '443') &&
-      parsed.pathname.startsWith('/npm/mermaid@')
+      (parsed.pathname.startsWith('/npm/mermaid@') || parsed.pathname.startsWith('/npm/katex@'))
     ) {
       return true;
     }

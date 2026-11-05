@@ -310,13 +310,21 @@ describe('Security & Input Validation Tests', () => {
       assert.equal(isAllowedBrowserUrl('about:blank'), true);
     });
 
-    it('should allow official Mermaid CDN URLs via HTTPS', () => {
+    it('should allow official Mermaid and KaTeX CDN URLs via HTTPS', () => {
       assert.equal(
         isAllowedBrowserUrl('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js'),
         true
       );
       assert.equal(
         isAllowedBrowserUrl('https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.min.js'),
+        true
+      );
+      assert.equal(
+        isAllowedBrowserUrl('https://cdn.jsdelivr.net/npm/katex@0.19.1/dist/katex.min.css'),
+        true
+      );
+      assert.equal(
+        isAllowedBrowserUrl('https://cdn.jsdelivr.net/npm/katex@0.19.1/dist/fonts/KaTeX_Main-Regular.woff2'),
         true
       );
     });
